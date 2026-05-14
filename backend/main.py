@@ -4,13 +4,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from routers import games, analysis, coach
+from routers import games, analysis, coach, cache
+from services.db import init_db
 
 load_dotenv()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_db()
     yield
 
 
@@ -27,6 +29,7 @@ app.add_middleware(
 app.include_router(games.router, prefix="/api")
 app.include_router(analysis.router, prefix="/api")
 app.include_router(coach.router, prefix="/api")
+app.include_router(cache.router, prefix="/api")
 
 
 @app.get("/api/health")

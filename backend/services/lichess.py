@@ -42,6 +42,9 @@ async def fetch_games(username: str, max_games: int = 20) -> list[dict]:
                     result = "1/2-1/2"
 
                 opening = g.get("opening", {})
+                # lastMoveAt is in milliseconds; convert to Unix seconds
+                last_move_ms = g.get("lastMoveAt") or g.get("createdAt")
+                end_time = (last_move_ms // 1000) if last_move_ms else None
                 games.append({
                     "source": "lichess",
                     "id": g.get("id", ""),
@@ -54,6 +57,7 @@ async def fetch_games(username: str, max_games: int = 20) -> list[dict]:
                     "url": f"https://lichess.org/{g.get('id', '')}",
                     "opening": opening.get("name", "") if opening else "",
                     "pgn": g.get("pgn", ""),
+                    "end_time": end_time,
                 })
     return games
 

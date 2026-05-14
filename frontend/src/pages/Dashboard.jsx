@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchGames } from '../api/chess'
 import GameList from '../components/GameList'
@@ -13,6 +13,33 @@ const MONTHS = [
   'July','August','September','October','November','December'
 ]
 
+const SORT_OPTIONS = [
+  { id: 'date_desc', label: 'Date (Newest first)' },
+  { id: 'date_asc', label: 'Date (Oldest first)' },
+  { id: 'result', label: 'Result' },
+  { id: 'opponent', label: 'Opponent (A–Z)' },
+]
+
+function sortGames(games, sortBy, username) {
+  const sorted = [...games]
+  switch (sortBy) {
+    case 'date_asc':
+      return sorted.sort((a, b) => (a.end_time ?? 0) - (b.end_time ?? 0))
+    case 'result':
+      return sorted.sort((a, b) => (a.result ?? '').localeCompare(b.result ?? ''))
+    case 'opponent': {
+      const getOpponent = g => {
+        const u = (username || '').toLowerCase()
+        return (g.white?.toLowerCase() === u ? g.black : g.white) ?? ''
+      }
+      return sorted.sort((a, b) => getOpponent(a).localeCompare(getOpponent(b)))
+    }
+    case 'date_desc':
+    default:
+      return sorted.sort((a, b) => (b.end_time ?? 0) - (a.end_time ?? 0))
+  }
+}
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const now = new Date()
@@ -22,6 +49,7 @@ export default function Dashboard() {
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1)
   const [games, setGames] = useState([])
+  const [sortBy, setSortBy] = useState('date_desc')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -53,7 +81,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
       {/* Header */}
-      <header className="border-b border-gray-800 bg-gray-900">
+      <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center gap-3">
           <span className="text-3xl">♛</span>
           <div>
@@ -155,9 +183,20 @@ export default function Dashboard() {
               <h2 className="text-lg font-semibold text-gray-200">
                 Games <span className="text-gray-500 text-sm font-normal">({games.length})</span>
               </h2>
-              <p className="text-xs text-gray-500">Click a game to analyze it</p>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-400">Sort:</label>
+                <select
+                  value={sortBy}
+                  onChange={e => setSortBy(e.target.value)}
+                  className="bg-gray-800 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                >
+                  {SORT_OPTIONS.map(o => (
+                    <option key={o.id} value={o.id}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <GameList games={games} username={username} onSelectGame={handleSelectGame} />
+            <GameList games={sortGames(games, sortBy, username)} username={username} onSelectGame={handleSelectGame} />
           </div>
         )}
 

@@ -16,3 +16,6 @@ frontend/dist/
 # Env
 .env
 *.env
+.claude
+.playwright-cli
+.playwright

@@ -2,7 +2,9 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from models import AnalyzeRequest
 from services.stockfish_service import analyze_pgn, analyze_pgn_stream
+from services.db import save_analysis, pgn_hash as compute_pgn_hash
 import asyncio
+import json
 
 router = APIRouter()
 
@@ -38,12 +40,28 @@ async def analyze_game_stream(req: AnalyzeRequest):
 
     async def generate():
         loop = asyncio.get_event_loop()
-        # Run the blocking generator in a thread pool, yielding chunks back to the event loop
         gen = analyze_pgn_stream(req.pgn, depth, player_color)
+        collected_moves = []
+        collected_summary = {}
         for chunk in gen:
             yield chunk
-            # Yield control back to the event loop so other requests can proceed
+            # Parse SSE chunks to collect moves and summary for caching
+            if chunk.startswith("data: ") and not chunk.strip().endswith("[DONE]"):
+                try:
+                    data = json.loads(chunk[6:].strip())
+                    if data.get("type") == "move":
+                        collected_moves.append(data)
+                    elif data.get("type") == "summary":
+                        collected_summary = data
+                except Exception:
+                    pass
             await asyncio.sleep(0)
+        # Persist to SQLite after stream finishes
+        if collected_moves:
+            try:
+                save_analysis(req.pgn, player_color, collected_moves, collected_summary)
+            except Exception:
+                pass  # caching is best-effort
 
     return StreamingResponse(
         generate(),

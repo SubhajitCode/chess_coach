@@ -23,12 +23,12 @@ export default function EvalBar({ evalScore, playerColor = 'white' }) {
   }
 
   return (
-    <div className="flex flex-col items-center gap-1">
-      <div className="text-xs text-gray-400 font-mono">{displayEval()}</div>
-      <div className="w-6 h-64 rounded-full overflow-hidden border border-gray-600 flex flex-col">
+    <div className="flex flex-col items-center gap-1.5 h-[520px]">
+      <div className="text-xs text-gray-300 font-mono font-semibold">{displayEval()}</div>
+      <div className="w-5 flex-1 rounded-full overflow-hidden border border-gray-600 flex flex-col">
         {/* Black portion (top) */}
         <div
-          className="bg-gray-800 transition-all duration-500 flex items-end justify-center pb-0.5"
+          className="bg-gray-700 transition-all duration-500"
           style={{ height: `${blackPercent}%` }}
         />
         {/* White portion (bottom) */}
@@ -36,11 +36,6 @@ export default function EvalBar({ evalScore, playerColor = 'white' }) {
           className="bg-gray-100 transition-all duration-500"
           style={{ height: `${whitePercent}%` }}
         />
-      </div>
-      <div className="text-xs text-gray-500">
-        {evalScore !== null && evalScore !== undefined && Math.abs(evalScore) < 9000
-          ? `${(evalScore / 100).toFixed(1)}`
-          : ''}
       </div>
     </div>
   )
