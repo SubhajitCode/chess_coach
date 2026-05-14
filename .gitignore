@@ -19,3 +19,5 @@ frontend/dist/
 .claude
 .playwright-cli
 .playwright
+chess_analyzer.db
+backend/chess_analyzer.db

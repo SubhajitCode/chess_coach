@@ -324,6 +324,24 @@ export default function Analysis() {
             >
               {analyzing ? '■ Stop' : streamedMoves.length > 0 ? 'Re-analyze' : '▶ Analyze'}
             </button>
+            {/* Practice Mistakes button — shown after analysis */}
+            {!analyzing && streamedMoves.length > 0 && (
+              <button
+                onClick={() => navigate('/practice', {
+                  state: {
+                    moves: streamedMoves,
+                    pgn: game.pgn,
+                    playerColor,
+                    username,
+                    gameInfo: { white: game.white, black: game.black, result: game.result, time_control: game.time_control, opening: game.opening },
+                  }
+                })}
+                className="px-4 py-2 text-white text-sm font-semibold rounded-xl transition-all bg-purple-700 hover:bg-purple-600 flex items-center gap-1.5"
+                title="Practice finding best moves from your mistakes"
+              >
+                🎯 Practice
+              </button>
+            )}
           </div>
         </div>
 
@@ -491,6 +509,23 @@ export default function Analysis() {
               </div>
             )}
 
+            {/* Practice Mistakes CTA — shown after analysis completes */}
+            {!analyzing && streamedMoves.length > 0 && (
+              <PracticeCTA
+                moves={streamedMoves}
+                playerColor={playerColor}
+                onOpen={() => navigate('/practice', {
+                  state: {
+                    moves: streamedMoves,
+                    pgn: game.pgn,
+                    playerColor,
+                    username,
+                    gameInfo: { white: game.white, black: game.black, result: game.result, time_control: game.time_control, opening: game.opening },
+                  }
+                })}
+              />
+            )}
+
             {/* Coach Panel — shown after analysis */}
             {(streamedMoves.length > 0 || coaching) && (
               <CoachPanel
@@ -573,6 +608,50 @@ function StatBadge({ label, value, color }) {
     <div className="bg-gray-800 rounded-lg px-3 py-2 text-center">
       <div className={`text-xl font-bold ${color}`}>{value}</div>
       <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+    </div>
+  )
+}
+
+function PracticeCTA({ moves, playerColor, onOpen }) {
+  const mistakes = moves.filter(m => m.classification === 'blunder' || m.classification === 'mistake')
+  const myMistakes = mistakes.filter(m => m.color === playerColor)
+  const theirMistakes = mistakes.filter(m => m.color !== playerColor)
+
+  if (mistakes.length === 0) return null
+
+  return (
+    <div className="bg-gray-900 rounded-xl border border-purple-800/50 p-4">
+      <div className="flex items-center gap-3 mb-3">
+        <span className="text-2xl">🎯</span>
+        <div>
+          <h3 className="text-white font-semibold">Learn from Mistakes</h3>
+          <p className="text-gray-400 text-xs">
+            Practice finding the best moves from {mistakes.length} critical position{mistakes.length !== 1 ? 's' : ''} in this game
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 mb-4 text-sm">
+        {myMistakes.length > 0 && (
+          <div className="flex items-center gap-1.5 bg-gray-800 rounded-lg px-3 py-1.5">
+            <span className="text-red-400 font-bold text-xs">??</span>
+            <span className="text-gray-300">Your mistakes: <span className="text-white font-semibold">{myMistakes.length}</span></span>
+          </div>
+        )}
+        {theirMistakes.length > 0 && (
+          <div className="flex items-center gap-1.5 bg-gray-800 rounded-lg px-3 py-1.5">
+            <span className="text-purple-400 font-bold text-xs">??</span>
+            <span className="text-gray-300">Opponent's: <span className="text-white font-semibold">{theirMistakes.length}</span></span>
+          </div>
+        )}
+      </div>
+
+      <button
+        onClick={onOpen}
+        className="w-full py-2.5 bg-purple-700 hover:bg-purple-600 text-white text-sm font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
+      >
+        🎯 Start Mistake Practice
+      </button>
     </div>
   )
 }
