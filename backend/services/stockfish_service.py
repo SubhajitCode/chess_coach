@@ -29,30 +29,37 @@ THRESHOLDS = {
 }
 
 ELO_CALIBRATION_POINTS = [
-    (0.0, 2500),
-    (10.0, 2200),
-    (30.0, 1800),
-    (60.0, 1400),
-    (120.0, 800),
-    (200.0, 200),
+    (8.0, 2900),
+    (15.0, 2400),
+    (25.0, 2000),
+    (40.0, 1600),
+    (60.0, 1200),
+    (80.0, 800),
+    (110.0, 500),
+    (150.0, 300),
+    (250.0, 100),
 ]
+
+MAX_CP_LOSS_FOR_STATS = 350.0
 
 
 def _estimate_elo(avg_cp_loss: float) -> int:
     """Rough ELO estimate from average centipawn loss per move.
 
-    This is a heuristic interpolation across calibration anchors, not a
-    Chess.com-equivalent rating estimate.
+    Uses a piecewise linear interpolation across calibration anchors.
     """
-    avg_cp_loss = max(0.0, avg_cp_loss)
+    avg_cp_loss = max(10.0, min(MAX_CP_LOSS_FOR_STATS, avg_cp_loss))
+
+    if avg_cp_loss <= ELO_CALIBRATION_POINTS[0][0]:
+        return ELO_CALIBRATION_POINTS[0][1]
 
     for index, (left_cp, left_elo) in enumerate(ELO_CALIBRATION_POINTS[:-1]):
         right_cp, right_elo = ELO_CALIBRATION_POINTS[index + 1]
         if avg_cp_loss <= right_cp:
             span = right_cp - left_cp
-            progress = 0.0 if span == 0 else (avg_cp_loss - left_cp) / span
+            progress = (avg_cp_loss - left_cp) / span
             elo = left_elo + (right_elo - left_elo) * progress
-            return round(max(200, min(2800, elo)))
+            return round(elo)
 
     return ELO_CALIBRATION_POINTS[-1][1]
 
@@ -286,6 +293,7 @@ def analyze_pgn(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: str = N
         counts[m.classification] = counts.get(m.classification, 0) + 1
 
     total_player = len(player_moves)
+    avg_capped_loss = 0.0
     # Accuracy formula (approximation used by Chess.com)
     if total_player > 0:
         weighted_score = sum(
@@ -293,6 +301,7 @@ def analyze_pgn(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: str = N
             for m in player_moves
         )
         accuracy = round(weighted_score / total_player, 1)
+        avg_capped_loss = sum(min(m.cp_loss, MAX_CP_LOSS_FOR_STATS) for m in player_moves) / total_player
     else:
         accuracy = 0.0
 
@@ -306,8 +315,8 @@ def analyze_pgn(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: str = N
         excellent_moves=counts["excellent"],
         best_moves=counts["best"],
         accuracy=accuracy,
-        avg_cp_loss=round(sum(m.cp_loss for m in player_moves) / total_player, 1) if total_player > 0 else None,
-        estimated_elo=_estimate_elo(sum(m.cp_loss for m in player_moves) / total_player) if total_player > 0 else None,
+        avg_cp_loss=round(avg_capped_loss, 1) if total_player > 0 else None,
+        estimated_elo=_estimate_elo(avg_capped_loss) if total_player > 0 else None,
     )
 
     return AnalysisResult(
@@ -330,12 +339,14 @@ def _build_summary(moves_data: list, player_color: str) -> dict:
         counts[m["classification"]] = counts.get(m["classification"], 0) + 1
 
     total_player = len(player_moves)
+    avg_capped_loss = 0.0
     if total_player > 0:
         weighted_score = sum(
             {"best": 100, "excellent": 90, "good": 75, "inaccuracy": 50, "mistake": 25, "blunder": 0}[m["classification"]]
             for m in player_moves
         )
         accuracy = round(weighted_score / total_player, 1)
+        avg_capped_loss = sum(min(m["cp_loss"], MAX_CP_LOSS_FOR_STATS) for m in player_moves) / total_player
     else:
         accuracy = 0.0
 
@@ -350,8 +361,8 @@ def _build_summary(moves_data: list, player_color: str) -> dict:
         "excellent_moves": counts["excellent"],
         "best_moves": counts["best"],
         "accuracy": accuracy,
-        "avg_cp_loss": round(sum(m["cp_loss"] for m in player_moves) / total_player, 1) if total_player > 0 else None,
-        "estimated_elo": _estimate_elo(sum(m["cp_loss"] for m in player_moves) / total_player) if total_player > 0 else None,
+        "avg_cp_loss": round(avg_capped_loss, 1) if total_player > 0 else None,
+        "estimated_elo": _estimate_elo(avg_capped_loss) if total_player > 0 else None,
     }
 
 

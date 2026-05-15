@@ -5,7 +5,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any
 
-from services.stockfish_service import _estimate_elo
+from services.stockfish_service import _estimate_elo, MAX_CP_LOSS_FOR_STATS
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "chess_analyzer.db")
 ANALYSIS_CACHE_VERSION = 2
@@ -80,11 +80,11 @@ def _refresh_summary_estimate(summary: dict[str, Any], moves: list[dict], player
     if not player_moves:
         return summary
 
-    avg_cp_loss = sum((move.get("cp_loss") or 0) for move in player_moves) / len(player_moves)
+    avg_capped_loss = sum(min(move.get("cp_loss") or 0, MAX_CP_LOSS_FOR_STATS) for move in player_moves) / len(player_moves)
     return {
         **summary,
-        "avg_cp_loss": round(avg_cp_loss, 1),
-        "estimated_elo": _estimate_elo(avg_cp_loss),
+        "avg_cp_loss": round(avg_capped_loss, 1),
+        "estimated_elo": _estimate_elo(avg_capped_loss),
     }
 
 

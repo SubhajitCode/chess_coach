@@ -1,0 +1,22 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: chess-analyzer-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - STOCKFISH_PATH=/usr/games/stockfish
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: chess-analyzer-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

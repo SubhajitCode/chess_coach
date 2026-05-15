@@ -10,22 +10,36 @@ A full-stack AI-powered chess coaching app. Import games from Chess.com or Liche
 - ⌨️ Keyboard navigation (← → arrow keys)
 
 ## Prerequisites
-- Stockfish: `brew install stockfish`
-- Python 3.11 or 3.12 (not 3.14+)
-- Node.js 18+
+- Stockfish (optional for local dev, included in Docker): `brew install stockfish`
+- Python 3.12 (optional for local dev, uses Poetry)
+- Node.js 22 (optional for local dev)
+- Docker & Docker Compose (recommended)
 - A provider key for **OpenRouter** or **Google AI Studio**
 
-## Setup
+## Setup with Docker (Recommended)
+The easiest way to run the full stack is using Docker Compose:
 
-### Backend
+1. Create a `.env` file in the `backend/` directory:
+   ```bash
+   cp backend/.env.example backend/.env
+   # Edit backend/.env and add your LLM API keys
+   ```
+2. Run Docker Compose:
+   ```bash
+   docker compose up --build
+   ```
+- Frontend: http://localhost:3000
+- Backend: http://localhost:8000
+
+## Manual Setup
+
+### Backend (with Poetry)
 ```bash
 cd backend
 cp .env.example .env
 # Edit .env: choose LLM_PROVIDER and add the matching API key
-python3.12 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload
+poetry install
+poetry run uvicorn main:app --reload
 ```
 Backend runs at: http://localhost:8000
 
