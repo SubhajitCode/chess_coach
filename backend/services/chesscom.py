@@ -10,14 +10,10 @@ async def fetch_games(username: str, year: int = None, month: int = None, max_ga
     now = datetime.utcnow()
     y = year or now.year
     m = month or now.month
+    normalized_username = username.strip().lower()
 
-    url = f"{CHESSCOM_BASE}/player/{username}/games/{y}/{m:02d}"
-    async with httpx.AsyncClient(headers=HEADERS, timeout=15) as client:
-        resp = client.get(url)
-        # Run sync since httpx async needs await — use sync client
-        pass
-
-    async with httpx.AsyncClient(headers=HEADERS, timeout=15) as client:
+    url = f"{CHESSCOM_BASE}/player/{normalized_username}/games/{y}/{m:02d}"
+    async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         data = resp.json()

@@ -1,9 +1,17 @@
 import os
 import json
+import logging
 from openai import AsyncOpenAI
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "meta-llama/llama-3.3-8b-instruct:free"
+PER_MOVE_CHUNK_SIZE = 12
+PER_MOVE_RETRY_CHUNK_SIZE = 4
+PER_MOVE_CONTEXT_OVERLAP = 2
+PER_MOVE_MAX_TOKENS = 2048
+PER_MOVE_STRICT_MAX_TOKENS = 1024
+
+logger = logging.getLogger(__name__)
 
 
 def _get_client(api_key: str = None) -> AsyncOpenAI:
@@ -16,6 +24,13 @@ def _get_client(api_key: str = None) -> AsyncOpenAI:
             "X-Title": "Chess Analyzer",
         },
     )
+
+
+def _preview_text(text: str, limit: int = 200) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit] + "..."
 
 
 def _build_prompt(analysis: dict, player_color: str, username: str = None) -> str:
@@ -93,6 +108,14 @@ async def get_coaching(
     chosen_model = model or os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
     prompt = _build_prompt(analysis, player_color, username)
 
+    logger.info(
+        "llm coaching request model=%s player_color=%s moves=%s prompt_preview=%s",
+        chosen_model,
+        player_color,
+        len(analysis.get("moves", [])),
+        _preview_text(prompt),
+    )
+
     response = await client.chat.completions.create(
         model=chosen_model,
         messages=[{"role": "user", "content": prompt}],
@@ -100,10 +123,103 @@ async def get_coaching(
         temperature=0.7,
     )
 
-    return response.choices[0].message.content or "No coaching response received."
+    content = response.choices[0].message.content or "No coaching response received."
+    logger.info(
+        "llm coaching response model=%s preview=%s",
+        chosen_model,
+        _preview_text(content),
+    )
+    return content
 
 
-def _build_per_move_prompt(analysis: dict, player_color: str, username: str = None) -> str:
+def _build_game_brief(analysis: dict, player_color: str, username: str = None) -> str:
+    white = analysis.get("white", "White")
+    black = analysis.get("black", "Black")
+    result = analysis.get("result", "*")
+    opening = analysis.get("opening") or "Unknown opening"
+    time_control = analysis.get("time_control") or "Unknown"
+    summary = analysis.get("summary", {})
+    moves = analysis.get("moves", [])
+
+    player_name = username or (white if player_color == "white" else black)
+    opponent_color = "black" if player_color == "white" else "white"
+    opponent_name = black if player_color == "white" else white
+
+    player_moves = [m for m in moves if m.get("color") == player_color]
+    critical = sorted(
+        [m for m in player_moves if m.get("classification") in ("blunder", "mistake", "inaccuracy")],
+        key=lambda m: m.get("cp_loss", 0) or 0,
+        reverse=True,
+    )[:3]
+
+    critical_lines = []
+    for move in critical:
+        cp_loss = move.get("cp_loss", 0) or 0
+        best = move.get("best_move_san")
+        detail = (
+            f"move {move.get('move_number', '?')} {move.get('color', '?')} {move.get('move_san', '?')} "
+            f"[{move.get('classification', 'good')}, loss={cp_loss:.0f}cp"
+        )
+        if best:
+            detail += f", best={best}"
+        detail += "]"
+        critical_lines.append(detail)
+
+    if not critical_lines:
+        critical_lines.append("no major mistakes in the analyzed game")
+
+    return "\n".join([
+        f"player={player_name} ({player_color}) vs {opponent_name} ({opponent_color})",
+        f"result={result} opening={opening} time_control={time_control}",
+        (
+            "player_summary="
+            f"accuracy {summary.get('accuracy', 0)}%, "
+            f"blunders {summary.get('blunders', 0)}, "
+            f"mistakes {summary.get('mistakes', 0)}, "
+            f"inaccuracies {summary.get('inaccuracies', 0)}, "
+            f"good/excellent/best {summary.get('good_moves', 0)}/{summary.get('excellent_moves', 0)}/{summary.get('best_moves', 0)}, "
+            f"avg_cp_loss {summary.get('avg_cp_loss', 'n/a')}"
+        ),
+        "critical_player_moments=" + " | ".join(critical_lines),
+    ])
+
+
+def _build_move_context_lines(moves: list[dict], player_color: str, target_indices: list[int]) -> str:
+    if not target_indices:
+        return ""
+
+    start = max(0, min(target_indices) - PER_MOVE_CONTEXT_OVERLAP)
+    end = min(len(moves), max(target_indices) + PER_MOVE_CONTEXT_OVERLAP + 1)
+    target_set = set(target_indices)
+    lines = []
+
+    for idx in range(start, end):
+        move = moves[idx]
+        prefix = "*" if idx in target_set else "-"
+        role = "player" if move.get("color") == player_color else "opponent"
+        move_num = move.get("move_number", "?")
+        color = move.get("color", "?")
+        san = move.get("move_san", "?")
+        cls = move.get("classification", "good")
+        cp_loss = move.get("cp_loss", 0) or 0
+        line = f"{prefix} idx={idx} move={move_num} color={color} role={role} san={san} class={cls}"
+        if cp_loss > 0:
+            line += f" loss={cp_loss:.0f}cp"
+        best = move.get("best_move_san")
+        if best and cls not in ("best", "excellent", "good"):
+            line += f" best={best}"
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def _build_per_move_chunk_prompt(
+    analysis: dict,
+    player_color: str,
+    target_indices: list[int],
+    username: str = None,
+    strict_json: bool = False,
+) -> str:
     white = analysis.get("white", "White")
     black = analysis.get("black", "Black")
     result = analysis.get("result", "*")
@@ -111,50 +227,82 @@ def _build_per_move_prompt(analysis: dict, player_color: str, username: str = No
     moves = analysis.get("moves", [])
 
     player_name = username or (white if player_color == "white" else black)
-    opponent_color = "black" if player_color == "white" else "white"
+    move_window = _build_move_context_lines(moves, player_color, target_indices)
+    game_brief = _build_game_brief(analysis, player_color, username)
+    target_list = ", ".join(str(idx) for idx in target_indices)
+    strict_block = ""
+    if strict_json:
+        strict_block = (
+            "\nSTRICT OUTPUT CONTRACT:\n"
+            "- Start the first character with [\n"
+            "- End the final character with ]\n"
+            "- Do not include analysis, notes, or thinking before or after the JSON array\n"
+            "- If you are about to explain your reasoning, do not; output the JSON array directly\n"
+        )
 
-    move_lines = []
-    for i, m in enumerate(moves):
-        move_num = m.get("move_number", "?")
-        san = m.get("move_san", "?")
-        best = m.get("best_move_san", "?")
-        cp = m.get("cp_loss", 0) or 0
-        cls = m.get("classification", "good")
-        mover_color = m.get("color", "?")
-        mover_role = "player" if mover_color == player_color else "opponent"
-        line = f'  move_index={i}, move {move_num} {mover_color} ({mover_role}): played {san} [{cls}'
-        if cp > 0:
-            line += f", -{cp:.0f}cp loss"
-        if best and cls not in ("best", "excellent", "good"):
-            line += f", best was {best}"
-        line += "]"
-        move_lines.append(line)
+    return f"""You are an expert chess coach writing concise per-move feedback for "{player_name}" who played as {player_color}.
 
-    moves_text = "\n".join(move_lines) if move_lines else "  (no moves found)"
+Use the compressed game brief and the local move window below. Give feedback ONLY for target moves (lines starting with "*"). Lines starting with "-" are context only.
 
-    prompt = f"""You are an expert chess coach giving per-move feedback for "{player_name}" who played as {player_color}.
+Rules:
+- Respond with ONLY a JSON array. No markdown or extra text.
+- Return exactly one item for every target move index: {target_list}
+- Each item must be {{"move_index": <number>, "feedback": "<text>"}}
+- Keep each feedback to at most 2 sentences and about 35 words.
+- For the player's strong moves, explain the idea or strength briefly.
+- For the player's weak moves, explain what went wrong and what the better move achieved.
+- For the opponent's strong moves, explain the threat or idea created against the player.
+- For the opponent's weak moves, explain the chance it gave the player.
+- Use natural coaching language like "You found...", "Your opponent created...", "This gave you a chance...".
+- Do not omit any target move.
+{strict_block}
+
+GAME BRIEF:
+{game_brief}
 
 GAME: {white} vs {black} | Result: {result} | Opening: {opening}
 
-For EACH move listed below, write a brief coaching comment from {player_name}'s perspective. Cover BOTH players' moves.
-- For the player's BEST / EXCELLENT / GOOD moves: give a short, genuine compliment about what makes the move strong (1 sentence).
-- For the player's INACCURACY / MISTAKE / BLUNDER moves: explain what went wrong and what the better move achieves (2 sentences max). Be specific.
-- For the opponent's BEST / EXCELLENT / GOOD moves: explain why the move was strong and what idea or threat it created against the player (1 sentence).
-- For the opponent's INACCURACY / MISTAKE / BLUNDER moves: explain what chance it gave the player and what stronger move the opponent had instead (2 sentences max).
-- Use natural coaching language like "You found...", "Your opponent created...", "This gave you a chance to...".
+LOCAL MOVE WINDOW:
+{move_window}
+"""
 
-Respond with ONLY a JSON array. No markdown, no explanation, no extra text — just raw JSON.
-[
-  {{"move_index": <number>, "feedback": "<text>"}},
-  ...
-]
 
-MOVES:
-{moves_text}
+def _group_target_indices(target_indices: list[int], chunk_size: int, max_gap: int = 3) -> list[list[int]]:
+    if not target_indices:
+        return []
 
-The player is {player_color}. The opponent is {opponent_color}."""
+    groups: list[list[int]] = []
+    current_group = [target_indices[0]]
 
-    return prompt
+    for idx in target_indices[1:]:
+        if len(current_group) >= chunk_size or idx - current_group[-1] > max_gap:
+            groups.append(current_group)
+            current_group = [idx]
+            continue
+        current_group.append(idx)
+
+    groups.append(current_group)
+    return groups
+
+
+def _normalise_coaching_items(coaching_list: list, allowed_indices: set[int]) -> list[dict]:
+    result = []
+    seen = set()
+    for item in coaching_list:
+        if not isinstance(item, dict) or "move_index" not in item or "feedback" not in item:
+            continue
+        try:
+            move_index = int(item["move_index"])
+        except (TypeError, ValueError):
+            continue
+        if move_index in seen or move_index not in allowed_indices:
+            continue
+        feedback = " ".join(str(item["feedback"]).split()).strip()
+        if not feedback:
+            continue
+        seen.add(move_index)
+        result.append({"move_index": move_index, "feedback": feedback})
+    return result
 
 
 def _extract_json_array(raw: str) -> list:
@@ -189,6 +337,31 @@ def _extract_json_array(raw: str) -> list:
         except json.JSONDecodeError:
             pass
 
+    # Recover fully-formed objects from a truncated JSON array.
+    if start != -1:
+        decoder = json.JSONDecoder()
+        idx = start + 1
+        items = []
+        raw_len = len(raw)
+
+        while idx < raw_len:
+            while idx < raw_len and raw[idx] in " \t\r\n,":
+                idx += 1
+
+            if idx >= raw_len or raw[idx] == "]":
+                break
+
+            try:
+                obj, next_idx = decoder.raw_decode(raw, idx)
+            except json.JSONDecodeError:
+                break
+
+            items.append(obj)
+            idx = next_idx
+
+        if items:
+            return items
+
     # Last resort: try to parse each line that looks like a JSON object
     items = []
     for line in raw.splitlines():
@@ -206,37 +379,183 @@ def _extract_json_array(raw: str) -> list:
     raise ValueError(f"Could not parse JSON from LLM response. Raw (first 300 chars): {raw[:300]}")
 
 
+def _build_per_move_messages(prompt: str, strict_json: bool = False) -> list[dict[str, str]]:
+    system = (
+        "You are a JSON generator for chess coaching. "
+        "Return only a valid JSON array of objects with keys move_index and feedback. "
+        "Do not reveal reasoning. Do not add commentary, markdown, or prose."
+    )
+    if strict_json:
+        system += (
+            " The first character of your response must be '[' and the last character must be ']'. "
+            "If you were going to think aloud, suppress that and output the JSON array immediately."
+        )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": prompt},
+    ]
+
+
+async def _request_per_move_group(
+    client: AsyncOpenAI,
+    chosen_model: str,
+    analysis: dict,
+    player_color: str,
+    group: list[int],
+    username: str | None,
+    strict_json: bool,
+) -> tuple[list[dict], str]:
+    prompt = _build_per_move_chunk_prompt(
+        analysis,
+        player_color,
+        group,
+        username,
+        strict_json=strict_json,
+    )
+    logger.info(
+        "llm per-move request model=%s strict=%s group=%s prompt_preview=%s",
+        chosen_model,
+        strict_json,
+        group,
+        _preview_text(prompt),
+    )
+    response = await client.chat.completions.create(
+        model=chosen_model,
+        messages=_build_per_move_messages(prompt, strict_json=strict_json),
+        max_tokens=PER_MOVE_STRICT_MAX_TOKENS if strict_json else PER_MOVE_MAX_TOKENS,
+        temperature=0.0 if strict_json else 0.2,
+    )
+
+    raw = (response.choices[0].message.content or "").strip()
+    if not raw:
+        logger.warning(
+            "llm per-move empty response model=%s strict=%s group=%s",
+            chosen_model,
+            strict_json,
+            group,
+        )
+        raise ValueError("LLM returned an empty response")
+
+    logger.info(
+        "llm per-move raw response model=%s strict=%s group=%s preview=%s",
+        chosen_model,
+        strict_json,
+        group,
+        _preview_text(raw, limit=300),
+    )
+    coaching_list = _extract_json_array(raw)
+    items = _normalise_coaching_items(coaching_list, set(group))
+    logger.info(
+        "llm per-move parsed model=%s strict=%s group=%s parsed=%s expected=%s",
+        chosen_model,
+        strict_json,
+        group,
+        len(items),
+        len(group),
+    )
+    return items, raw
+
+
 async def get_per_move_coaching(
     analysis: dict,
     player_color: str,
     username: str = None,
     api_key: str = None,
     model: str = None,
+    target_move_indices: list[int] | None = None,
 ) -> list[dict]:
-    """Return a list of {move_index, feedback} dicts — one per move."""
+    """Return {move_index, feedback} dicts for the requested moves using chunked prompts."""
     client = _get_client(api_key)
     chosen_model = model or os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
-    prompt = _build_per_move_prompt(analysis, player_color, username)
+    moves = analysis.get("moves", [])
+    if not moves:
+        return []
 
-    response = await client.chat.completions.create(
-        model=chosen_model,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=4096,
-        temperature=0.5,
-    )
+    total_moves = len(moves)
+    if target_move_indices is None:
+        requested_indices = list(range(total_moves))
+    else:
+        requested_indices = sorted({idx for idx in target_move_indices if 0 <= idx < total_moves})
 
-    raw = (response.choices[0].message.content or "").strip()
-    if not raw:
-        raise ValueError("LLM returned an empty response")
+    if not requested_indices:
+        return []
 
-    coaching_list = _extract_json_array(raw)
+    chunk_groups = _group_target_indices(requested_indices, PER_MOVE_CHUNK_SIZE)
+    feedback_by_index: dict[int, str] = {}
 
-    # Normalise: ensure each entry has move_index (int) and feedback (str)
-    result = []
-    for item in coaching_list:
-        if isinstance(item, dict) and "move_index" in item and "feedback" in item:
-            result.append({
-                "move_index": int(item["move_index"]),
-                "feedback": str(item["feedback"]),
-            })
-    return result
+    async def process_group(group: list[int]) -> None:
+        raw_error = None
+
+        for strict_json in (False, True):
+            try:
+                items, _ = await _request_per_move_group(
+                    client,
+                    chosen_model,
+                    analysis,
+                    player_color,
+                    group,
+                    username,
+                    strict_json,
+                )
+            except ValueError as exc:
+                raw_error = str(exc)
+                logger.warning(
+                    "llm per-move parse failure model=%s strict=%s group=%s error=%s",
+                    chosen_model,
+                    strict_json,
+                    group,
+                    raw_error,
+                )
+                items = []
+
+            if len(items) == len(group):
+                for item in items:
+                    feedback_by_index[item["move_index"]] = item["feedback"]
+                return
+
+            if items:
+                for item in items:
+                    feedback_by_index[item["move_index"]] = item["feedback"]
+
+        unresolved = [idx for idx in group if idx not in feedback_by_index]
+        if not unresolved:
+            return
+
+        if len(unresolved) == 1:
+            detail = raw_error or f"LLM did not return feedback for move index {unresolved[0]}"
+            logger.error(
+                "llm per-move unresolved single index model=%s index=%s error=%s",
+                chosen_model,
+                unresolved[0],
+                detail,
+            )
+            raise ValueError(detail)
+
+        midpoint = len(unresolved) // 2
+        logger.info(
+            "llm per-move splitting unresolved group model=%s unresolved=%s left=%s right=%s",
+            chosen_model,
+            unresolved,
+            unresolved[:midpoint],
+            unresolved[midpoint:],
+        )
+        await process_group(unresolved[:midpoint])
+        await process_group(unresolved[midpoint:])
+
+    async def generate_groups(groups: list[list[int]]) -> None:
+        for group in groups:
+            await process_group(group)
+
+    await generate_groups(chunk_groups)
+
+    missing_indices = [idx for idx in requested_indices if idx not in feedback_by_index]
+    if missing_indices:
+        retry_groups = _group_target_indices(missing_indices, PER_MOVE_RETRY_CHUNK_SIZE, max_gap=1)
+        await generate_groups(retry_groups)
+
+    still_missing = [idx for idx in requested_indices if idx not in feedback_by_index]
+    if still_missing:
+        preview = ", ".join(str(idx) for idx in still_missing[:10])
+        raise ValueError(f"LLM did not return feedback for move indices: {preview}")
+
+    return [{"move_index": idx, "feedback": feedback_by_index[idx]} for idx in requested_indices]
