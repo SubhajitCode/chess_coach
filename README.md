@@ -6,14 +6,14 @@ A full-stack AI-powered chess coaching app. Import games from Chess.com or Liche
 - 📥 Fetch games from **Chess.com** or **Lichess**
 - 🔍 Move-by-move analysis with **Stockfish 18** (local)
 - 📊 Evaluation bar, eval chart, and move classifications (best/excellent/good/inaccuracy/mistake/blunder)
-- 🎓 AI coaching feedback via **OpenRouter** (free LLM models)
+- 🎓 AI coaching feedback via **OpenRouter** or **Google AI Studio**
 - ⌨️ Keyboard navigation (← → arrow keys)
 
 ## Prerequisites
 - Stockfish: `brew install stockfish`
 - Python 3.11 or 3.12 (not 3.14+)
 - Node.js 18+
-- [OpenRouter API key](https://openrouter.ai) (free tier available)
+- A provider key for **OpenRouter** or **Google AI Studio**
 
 ## Setup
 
@@ -21,7 +21,7 @@ A full-stack AI-powered chess coaching app. Import games from Chess.com or Liche
 ```bash
 cd backend
 cp .env.example .env
-# Edit .env: add your OPENROUTER_API_KEY
+# Edit .env: choose LLM_PROVIDER and add the matching API key
 python3.12 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -49,8 +49,27 @@ Frontend runs at: http://localhost:5173
 ## Environment Variables (`backend/.env`)
 ```
 STOCKFISH_PATH=/opt/homebrew/bin/stockfish
-OPENROUTER_API_KEY=your_key_here
-OPENROUTER_MODEL=meta-llama/llama-3.3-8b-instruct:free
+LLM_PROVIDER=openrouter
+LLM_MODEL=meta-llama/llama-3.3-8b-instruct:free
+OPENROUTER_API_KEY=your_openrouter_key_here
+```
+
+Or switch to Google AI Studio:
+
+```env
+STOCKFISH_PATH=/opt/homebrew/bin/stockfish
+LLM_PROVIDER=google_ai_studio
+LLM_MODEL=gemini-3-flash-preview
+GOOGLE_AI_STUDIO_API_KEY=your_google_ai_studio_key_here
+# or GEMINI_API_KEY=your_google_ai_studio_key_here
+```
+
+Optional overrides:
+
+```env
+LLM_BASE_URL=
+OPENROUTER_BASE_URL=
+GOOGLE_AI_STUDIO_BASE_URL=
 ```
 
 ## Usage
@@ -62,7 +81,7 @@ OPENROUTER_MODEL=meta-llama/llama-3.3-8b-instruct:free
 6. Step through moves with ← → keys or click the move table
 7. Click **Get Coaching** for AI coaching feedback
 
-## Free LLM Models (OpenRouter)
-- `meta-llama/llama-3.3-8b-instruct:free`
-- `google/gemma-3-4b-it:free`
-- `mistralai/mistral-7b-instruct:free`
+## Example LLM Models
+**OpenRouter:** `meta-llama/llama-3.3-8b-instruct:free`, `google/gemma-3-4b-it:free`, `mistralai/mistral-7b-instruct:free`
+
+**Google AI Studio:** `gemini-3-flash-preview`, `gemini-2.5-flash`

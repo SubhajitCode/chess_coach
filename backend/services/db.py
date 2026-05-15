@@ -5,7 +5,10 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any
 
+from services.stockfish_service import _estimate_elo
+
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "chess_analyzer.db")
+ANALYSIS_CACHE_VERSION = 2
 
 
 def _get_connection() -> sqlite3.Connection:
@@ -36,6 +39,15 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        analysis_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(analysis_cache)").fetchall()
+        }
+        if "version" not in analysis_columns:
+            conn.execute(
+                "ALTER TABLE analysis_cache ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
+            )
+        conn.execute("UPDATE analysis_cache SET version = 1 WHERE version IS NULL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS move_coaching (
                 pgn_hash   TEXT NOT NULL,
@@ -45,10 +57,35 @@ def init_db() -> None:
                 PRIMARY KEY (pgn_hash, move_index)
             )
         """)
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(move_coaching)").fetchall()
+        }
+        if "version" not in columns:
+            conn.execute(
+                "ALTER TABLE move_coaching ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
+            )
+        conn.execute("UPDATE move_coaching SET version = 1 WHERE version IS NULL")
 
 
 def pgn_hash(pgn: str) -> str:
     return hashlib.sha256(pgn.strip().encode()).hexdigest()[:24]
+
+
+def _refresh_summary_estimate(summary: dict[str, Any], moves: list[dict], player_color: str | None) -> dict[str, Any]:
+    if not summary or not player_color:
+        return summary
+
+    player_moves = [move for move in moves if move.get("color") == player_color]
+    if not player_moves:
+        return summary
+
+    avg_cp_loss = sum((move.get("cp_loss") or 0) for move in player_moves) / len(player_moves)
+    return {
+        **summary,
+        "avg_cp_loss": round(avg_cp_loss, 1),
+        "estimated_elo": _estimate_elo(avg_cp_loss),
+    }
 
 
 def save_analysis(pgn: str, player_color: str, moves: list[dict], summary: dict) -> str:
@@ -57,10 +94,10 @@ def save_analysis(pgn: str, player_color: str, moves: list[dict], summary: dict)
         conn.execute(
             """
             INSERT OR REPLACE INTO analysis_cache
-              (pgn_hash, pgn, player_color, moves_json, summary_json)
-            VALUES (?, ?, ?, ?, ?)
+              (pgn_hash, pgn, player_color, moves_json, summary_json, version)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (h, pgn, player_color, json.dumps(moves), json.dumps(summary)),
+            (h, pgn, player_color, json.dumps(moves), json.dumps(summary), ANALYSIS_CACHE_VERSION),
         )
     return h
 
@@ -68,15 +105,21 @@ def save_analysis(pgn: str, player_color: str, moves: list[dict], summary: dict)
 def get_analysis(h: str) -> dict[str, Any] | None:
     with _db() as conn:
         row = conn.execute(
-            "SELECT * FROM analysis_cache WHERE pgn_hash = ?", (h,)
+            "SELECT * FROM analysis_cache WHERE pgn_hash = ? AND version = ?", (h, ANALYSIS_CACHE_VERSION)
         ).fetchone()
     if row is None:
         return None
+    moves = json.loads(row["moves_json"])
+    summary = _refresh_summary_estimate(
+        json.loads(row["summary_json"]),
+        moves,
+        row["player_color"],
+    )
     return {
         "pgn_hash": row["pgn_hash"],
         "player_color": row["player_color"],
-        "moves": json.loads(row["moves_json"]),
-        "summary": json.loads(row["summary_json"]),
+        "moves": moves,
+        "summary": summary,
         "created_at": row["created_at"],
     }
 
@@ -84,13 +127,18 @@ def get_analysis(h: str) -> dict[str, Any] | None:
 def list_cached() -> list[dict[str, Any]]:
     with _db() as conn:
         rows = conn.execute(
-            "SELECT pgn_hash, player_color, summary_json, created_at FROM analysis_cache ORDER BY created_at DESC"
+            "SELECT pgn_hash, player_color, moves_json, summary_json, created_at FROM analysis_cache WHERE version = ? ORDER BY created_at DESC",
+            (ANALYSIS_CACHE_VERSION,),
         ).fetchall()
     return [
         {
             "pgn_hash": r["pgn_hash"],
             "player_color": r["player_color"],
-            "summary": json.loads(r["summary_json"]),
+            "summary": _refresh_summary_estimate(
+                json.loads(r["summary_json"]),
+                json.loads(r["moves_json"]),
+                r["player_color"],
+            ),
             "created_at": r["created_at"],
         }
         for r in rows
@@ -103,24 +151,24 @@ def delete_analysis(h: str) -> bool:
     return cur.rowcount > 0
 
 
-def save_move_coaching(pgn_hash: str, coaching: list[dict]) -> None:
+def save_move_coaching(pgn_hash: str, coaching: list[dict], version: int = 1) -> None:
     """Save per-move coaching feedback. Each dict must have move_index and feedback."""
     with _db() as conn:
         conn.executemany(
             """
-            INSERT OR REPLACE INTO move_coaching (pgn_hash, move_index, feedback)
-            VALUES (?, ?, ?)
+            INSERT OR REPLACE INTO move_coaching (pgn_hash, move_index, feedback, version)
+            VALUES (?, ?, ?, ?)
             """,
-            [(pgn_hash, item["move_index"], item["feedback"]) for item in coaching],
+            [(pgn_hash, item["move_index"], item["feedback"], version) for item in coaching],
         )
 
 
-def get_move_coaching(pgn_hash: str) -> list[dict] | None:
+def get_move_coaching(pgn_hash: str, version: int = 1) -> list[dict] | None:
     """Return per-move coaching for a game, or None if not cached."""
     with _db() as conn:
         rows = conn.execute(
-            "SELECT move_index, feedback FROM move_coaching WHERE pgn_hash = ? ORDER BY move_index",
-            (pgn_hash,),
+            "SELECT move_index, feedback FROM move_coaching WHERE pgn_hash = ? AND version = ? ORDER BY move_index",
+            (pgn_hash, version),
         ).fetchall()
     if not rows:
         return None

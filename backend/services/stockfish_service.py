@@ -9,6 +9,15 @@ from models import MoveAnalysis, GameSummary, AnalysisResult
 
 STOCKFISH_PATH = os.getenv("STOCKFISH_PATH", "/opt/homebrew/bin/stockfish")
 DEFAULT_DEPTH = 18
+PV_PREVIEW_LENGTH = 4
+PIECE_NAMES = {
+    chess.PAWN: "pawn",
+    chess.KNIGHT: "knight",
+    chess.BISHOP: "bishop",
+    chess.ROOK: "rook",
+    chess.QUEEN: "queen",
+    chess.KING: "king",
+}
 
 # Centipawn loss thresholds for classification
 THRESHOLDS = {
@@ -19,12 +28,33 @@ THRESHOLDS = {
     "mistake": 200,
 }
 
+ELO_CALIBRATION_POINTS = [
+    (0.0, 2500),
+    (10.0, 2200),
+    (30.0, 1800),
+    (60.0, 1400),
+    (120.0, 800),
+    (200.0, 200),
+]
+
 
 def _estimate_elo(avg_cp_loss: float) -> int:
-    """Rough ELO estimate from average centipawn loss per move."""
-    # Calibrated: ACPL~10 ≈ 2200, ACPL~30 ≈ 1800, ACPL~60 ≈ 1400, ACPL~120 ≈ 800
-    elo = round(2500 * (0.97 ** avg_cp_loss))
-    return max(200, min(2800, elo))
+    """Rough ELO estimate from average centipawn loss per move.
+
+    This is a heuristic interpolation across calibration anchors, not a
+    Chess.com-equivalent rating estimate.
+    """
+    avg_cp_loss = max(0.0, avg_cp_loss)
+
+    for index, (left_cp, left_elo) in enumerate(ELO_CALIBRATION_POINTS[:-1]):
+        right_cp, right_elo = ELO_CALIBRATION_POINTS[index + 1]
+        if avg_cp_loss <= right_cp:
+            span = right_cp - left_cp
+            progress = 0.0 if span == 0 else (avg_cp_loss - left_cp) / span
+            elo = left_elo + (right_elo - left_elo) * progress
+            return round(max(200, min(2800, elo)))
+
+    return ELO_CALIBRATION_POINTS[-1][1]
 
 
 def classify_move(cp_loss: float) -> str:
@@ -53,6 +83,134 @@ def score_to_cp(score: chess.engine.Score, pov: chess.Color) -> float | None:
     return float(cp) if cp is not None else None
 
 
+def _piece_name(piece: chess.Piece | None) -> str | None:
+    if piece is None:
+        return None
+    return PIECE_NAMES.get(piece.piece_type)
+
+
+def _captured_piece_name(board: chess.Board, move: chess.Move) -> str | None:
+    if not board.is_capture(move):
+        return None
+    if board.is_en_passant(move):
+        return "pawn"
+    return _piece_name(board.piece_at(move.to_square))
+
+
+def _move_summary(board: chess.Board, move: chess.Move) -> str:
+    piece = board.piece_at(move.from_square)
+    piece_name = _piece_name(piece) or "piece"
+    from_square = chess.square_name(move.from_square)
+    to_square = chess.square_name(move.to_square)
+    captured_piece = _captured_piece_name(board, move)
+    promotion_piece = PIECE_NAMES.get(move.promotion) if move.promotion else None
+
+    if board.is_castling(move):
+        summary = "king castles kingside" if chess.square_file(move.to_square) == 6 else "king castles queenside"
+    elif captured_piece:
+        summary = f"{piece_name} from {from_square} captures the {captured_piece} on {to_square}"
+    else:
+        summary = f"{piece_name} from {from_square} moves to {to_square}"
+
+    if promotion_piece:
+        summary += f" and promotes to a {promotion_piece}"
+
+    board_after = board.copy(stack=False)
+    board_after.push(move)
+    if board_after.is_checkmate():
+        summary += ", delivering checkmate"
+    elif board_after.is_check():
+        summary += ", giving check"
+
+    return summary
+
+
+def _move_fact_fields(board: chess.Board, move: chess.Move | None, prefix: str) -> dict:
+    if move is None:
+        return {
+            f"{prefix}_piece": None,
+            f"{prefix}_from": None,
+            f"{prefix}_to": None,
+            f"{prefix}_captured_piece": None,
+            f"{prefix}_is_capture": False,
+            f"{prefix}_is_check": False,
+            f"{prefix}_is_checkmate": False,
+            f"{prefix}_summary": None,
+        }
+
+    piece = board.piece_at(move.from_square)
+    board_after = board.copy(stack=False)
+    board_after.push(move)
+
+    return {
+        f"{prefix}_piece": _piece_name(piece),
+        f"{prefix}_from": chess.square_name(move.from_square),
+        f"{prefix}_to": chess.square_name(move.to_square),
+        f"{prefix}_captured_piece": _captured_piece_name(board, move),
+        f"{prefix}_is_capture": board.is_capture(move),
+        f"{prefix}_is_check": board_after.is_check(),
+        f"{prefix}_is_checkmate": board_after.is_checkmate(),
+        f"{prefix}_summary": _move_summary(board, move),
+    }
+
+
+def _pv_preview(board: chess.Board, pv: list[chess.Move] | None, limit: int = PV_PREVIEW_LENGTH) -> tuple[list[str], list[str]]:
+    if not pv:
+        return [], []
+
+    pv_board = board.copy(stack=False)
+    pv_san: list[str] = []
+    pv_uci: list[str] = []
+    for pv_move in pv[:limit]:
+        try:
+            pv_san.append(pv_board.san(pv_move))
+        except Exception:
+            pv_san.append(pv_move.uci())
+        pv_uci.append(pv_move.uci())
+        pv_board.push(pv_move)
+    return pv_san, pv_uci
+
+
+def _build_move_record(
+    board_before: chess.Board,
+    move: chess.Move,
+    best_move: chess.Move | None,
+    best_line_san: list[str],
+    best_line_uci: list[str],
+    move_number: int,
+    color: str,
+    eval_before_white: float | None,
+    eval_after_white: float | None,
+    cp_loss: float,
+    classification: str,
+    record_type: str | None = None,
+) -> dict:
+    board_after = board_before.copy(stack=False)
+    board_after.push(move)
+
+    record = {
+        "move_number": move_number,
+        "color": color,
+        "move_san": board_before.san(move),
+        "move_uci": move.uci(),
+        "eval_before": eval_before_white,
+        "eval_after": eval_after_white,
+        "best_move_uci": str(best_move) if best_move else None,
+        "best_move_san": board_before.san(best_move) if best_move else None,
+        "fen_before": board_before.fen(),
+        "fen_after": board_after.fen(),
+        "best_line_san": best_line_san,
+        "best_line_uci": best_line_uci,
+        "cp_loss": cp_loss,
+        "classification": classification,
+        **_move_fact_fields(board_before, move, "move"),
+        **_move_fact_fields(board_before, best_move, "best_move"),
+    }
+    if record_type is not None:
+        record["type"] = record_type
+    return record
+
+
 def analyze_pgn(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: str = None) -> AnalysisResult:
     pgn_io = io.StringIO(pgn_text)
     game = chess.pgn.read_game(pgn_io)
@@ -70,10 +228,7 @@ def analyze_pgn(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: str = N
     if player_color is None:
         player_color = "white"  # default; caller should set this
 
-    player_chess_color = chess.WHITE if player_color == "white" else chess.BLACK
-
     board = game.board()
-    node = game
     moves_data: list[MoveAnalysis] = []
 
     with chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH) as engine:
@@ -87,19 +242,12 @@ def analyze_pgn(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: str = N
             move_number = (half_move + 1) // 2
 
             # Eval BEFORE the move
+            board_before = board.copy(stack=False)
             info_before = engine.analyse(board, chess.engine.Limit(depth=depth))
             eval_before_white = score_to_cp(info_before["score"], chess.WHITE)
 
-            best_move_uci = info_before.get("pv", [None])[0]
-            best_move_san = None
-            if best_move_uci:
-                try:
-                    best_move_san = board.san(best_move_uci)
-                except Exception:
-                    best_move_san = str(best_move_uci)
-
-            move_san = board.san(move)
-            move_uci = move.uci()
+            best_move = info_before.get("pv", [None])[0]
+            best_line_san, best_line_uci = _pv_preview(board_before, info_before.get("pv"))
 
             board.push(move)
 
@@ -117,18 +265,19 @@ def analyze_pgn(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: str = N
 
             classification = classify_move(cp_loss)
 
-            moves_data.append(MoveAnalysis(
+            moves_data.append(MoveAnalysis(**_build_move_record(
+                board_before=board_before,
+                move=move,
+                best_move=best_move,
+                best_line_san=best_line_san,
+                best_line_uci=best_line_uci,
                 move_number=move_number,
                 color=color,
-                move_san=move_san,
-                move_uci=move_uci,
-                eval_before=eval_before_white,
-                eval_after=eval_after_white,
-                best_move_uci=str(best_move_uci) if best_move_uci else None,
-                best_move_san=best_move_san,
+                eval_before_white=eval_before_white,
+                eval_after_white=eval_after_white,
                 cp_loss=cp_loss,
                 classification=classification,
-            ))
+            )))
 
     # Build summary for the player
     player_moves = [m for m in moves_data if m.color == player_color]
@@ -240,19 +389,12 @@ def analyze_pgn_stream(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: 
                 half_move += 1
                 move_number = (half_move + 1) // 2
 
+                board_before = board.copy(stack=False)
                 info_before = engine.analyse(board, chess.engine.Limit(depth=depth))
                 eval_before_white = score_to_cp(info_before["score"], chess.WHITE)
 
-                best_move_uci = info_before.get("pv", [None])[0]
-                best_move_san = None
-                if best_move_uci:
-                    try:
-                        best_move_san = board.san(best_move_uci)
-                    except Exception:
-                        best_move_san = str(best_move_uci)
-
-                move_san = board.san(move)
-                move_uci = move.uci()
+                best_move = info_before.get("pv", [None])[0]
+                best_line_san, best_line_uci = _pv_preview(board_before, info_before.get("pv"))
 
                 board.push(move)
 
@@ -267,19 +409,20 @@ def analyze_pgn_stream(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: 
 
                 classification = classify_move(cp_loss)
 
-                move_dict = {
-                    "type": "move",
-                    "move_number": move_number,
-                    "color": color,
-                    "move_san": move_san,
-                    "move_uci": move_uci,
-                    "eval_before": eval_before_white,
-                    "eval_after": eval_after_white,
-                    "best_move_uci": str(best_move_uci) if best_move_uci else None,
-                    "best_move_san": best_move_san,
-                    "cp_loss": cp_loss,
-                    "classification": classification,
-                }
+                move_dict = _build_move_record(
+                    board_before=board_before,
+                    move=move,
+                    best_move=best_move,
+                    best_line_san=best_line_san,
+                    best_line_uci=best_line_uci,
+                    move_number=move_number,
+                    color=color,
+                    eval_before_white=eval_before_white,
+                    eval_after_white=eval_after_white,
+                    cp_loss=cp_loss,
+                    classification=classification,
+                    record_type="move",
+                )
                 moves_data.append(move_dict)
                 yield f"data: {json.dumps(move_dict)}\n\n"
 

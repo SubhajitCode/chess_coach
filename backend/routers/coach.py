@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from models import CoachRequest, PerMoveCoachRequest
-from services.llm_service import get_coaching, get_per_move_coaching
+from services.llm_service import COACHING_CACHE_VERSION, get_coaching, get_per_move_coaching
 from services.db import save_move_coaching, get_move_coaching
 
 router = APIRouter()
@@ -36,7 +36,7 @@ async def get_per_move_coach_feedback(req: PerMoveCoachRequest):
     expected_moves = len(req.analysis.get("moves", []))
     expected_indices = list(range(expected_moves))
 
-    cached = get_move_coaching(req.pgn_hash) or []
+    cached = get_move_coaching(req.pgn_hash, version=COACHING_CACHE_VERSION) or []
     cached_map = {item["move_index"]: item["feedback"] for item in cached}
     missing_indices = [idx for idx in expected_indices if idx not in cached_map]
 
@@ -52,7 +52,7 @@ async def get_per_move_coach_feedback(req: PerMoveCoachRequest):
             target_move_indices=missing_indices,
         )
         if coaching:
-            save_move_coaching(req.pgn_hash, coaching)
+            save_move_coaching(req.pgn_hash, coaching, version=COACHING_CACHE_VERSION)
             cached_map.update({item["move_index"]: item["feedback"] for item in coaching})
 
         merged = [{"move_index": idx, "feedback": cached_map[idx]} for idx in expected_indices if idx in cached_map]
@@ -64,7 +64,7 @@ async def get_per_move_coach_feedback(req: PerMoveCoachRequest):
 @router.get("/coach/per-move/{pgn_hash}")
 async def get_cached_per_move_coaching(pgn_hash: str):
     """Retrieve previously generated per-move coaching from DB."""
-    coaching = get_move_coaching(pgn_hash)
+    coaching = get_move_coaching(pgn_hash, version=COACHING_CACHE_VERSION)
     if coaching is None:
         raise HTTPException(status_code=404, detail="No per-move coaching found for this game")
     return {"coaching": coaching, "cached": True}

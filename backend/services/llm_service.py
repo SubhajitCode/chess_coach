@@ -1,10 +1,17 @@
 import os
 import json
 import logging
+from dataclasses import dataclass
 from openai import AsyncOpenAI
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "meta-llama/llama-3.3-8b-instruct:free"
+GOOGLE_AI_STUDIO_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
+DEFAULT_PROVIDER = "openrouter"
+DEFAULT_MODEL_BY_PROVIDER = {
+    "openrouter": "meta-llama/llama-3.3-8b-instruct:free",
+    "google_ai_studio": "gemini-3-flash-preview",
+}
+COACHING_CACHE_VERSION = 2
 PER_MOVE_CHUNK_SIZE = 12
 PER_MOVE_RETRY_CHUNK_SIZE = 4
 PER_MOVE_CONTEXT_OVERLAP = 2
@@ -14,16 +21,96 @@ PER_MOVE_STRICT_MAX_TOKENS = 1024
 logger = logging.getLogger(__name__)
 
 
-def _get_client(api_key: str = None) -> AsyncOpenAI:
-    key = api_key or os.getenv("OPENROUTER_API_KEY", "")
-    return AsyncOpenAI(
-        base_url=OPENROUTER_BASE,
-        api_key=key,
-        default_headers={
+@dataclass(frozen=True)
+class LLMConfig:
+    provider: str
+    api_key: str
+    base_url: str
+    model: str
+    default_headers: dict[str, str] | None = None
+
+
+def _normalise_provider(raw_provider: str | None) -> str:
+    provider = (raw_provider or DEFAULT_PROVIDER).strip().lower().replace("-", "_")
+    aliases = {
+        "openrouter": "openrouter",
+        "google": "google_ai_studio",
+        "gemini": "google_ai_studio",
+        "google_ai_studio": "google_ai_studio",
+        "googleaistudio": "google_ai_studio",
+    }
+    normalized = aliases.get(provider)
+    if not normalized:
+        raise ValueError(
+            "Unsupported LLM_PROVIDER. Use 'openrouter' or 'google_ai_studio'."
+        )
+    return normalized
+
+
+def _get_llm_config(api_key: str = None, model: str = None) -> LLMConfig:
+    provider = _normalise_provider(os.getenv("LLM_PROVIDER"))
+
+    if provider == "openrouter":
+        resolved_api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+        resolved_model = (
+            model
+            or os.getenv("LLM_MODEL")
+            or os.getenv("OPENROUTER_MODEL")
+            or DEFAULT_MODEL_BY_PROVIDER[provider]
+        )
+        base_url = os.getenv("LLM_BASE_URL") or os.getenv("OPENROUTER_BASE_URL") or OPENROUTER_BASE
+        default_headers = {
             "HTTP-Referer": "http://localhost:5173",
             "X-Title": "Chess Analyzer",
-        },
+        }
+    else:
+        resolved_api_key = (
+            api_key
+            or os.getenv("LLM_API_KEY")
+            or os.getenv("GOOGLE_AI_STUDIO_API_KEY")
+            or os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+        )
+        resolved_model = (
+            model
+            or os.getenv("LLM_MODEL")
+            or os.getenv("GOOGLE_AI_STUDIO_MODEL")
+            or os.getenv("GEMINI_MODEL")
+            or DEFAULT_MODEL_BY_PROVIDER[provider]
+        )
+        base_url = (
+            os.getenv("LLM_BASE_URL")
+            or os.getenv("GOOGLE_AI_STUDIO_BASE_URL")
+            or GOOGLE_AI_STUDIO_BASE
+        )
+        default_headers = None
+
+    if not resolved_api_key:
+        if provider == "openrouter":
+            raise ValueError(
+                "Missing OpenRouter API key. Set OPENROUTER_API_KEY or LLM_API_KEY."
+            )
+        raise ValueError(
+            "Missing Google AI Studio API key. Set GOOGLE_AI_STUDIO_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, or LLM_API_KEY."
+        )
+
+    return LLMConfig(
+        provider=provider,
+        api_key=resolved_api_key,
+        base_url=base_url,
+        model=resolved_model,
+        default_headers=default_headers,
     )
+
+
+def _get_client(config: LLMConfig) -> AsyncOpenAI:
+    kwargs = {
+        "base_url": config.base_url,
+        "api_key": config.api_key,
+    }
+    if config.default_headers:
+        kwargs["default_headers"] = config.default_headers
+    return AsyncOpenAI(**kwargs)
 
 
 def _preview_text(text: str, limit: int = 200) -> str:
@@ -31,6 +118,40 @@ def _preview_text(text: str, limit: int = 200) -> str:
     if len(compact) <= limit:
         return compact
     return compact[:limit] + "..."
+
+
+def _sentence_case(text: str | None) -> str | None:
+    if not text:
+        return None
+    return text[:1].upper() + text[1:]
+
+
+def _move_role(move: dict, player_color: str) -> str:
+    return "player" if move.get("color") == player_color else "opponent"
+
+
+def _best_line_preview(move: dict) -> str:
+    best_line = [san for san in move.get("best_line_san", []) if san]
+    return " ".join(best_line[:4]) if best_line else "n/a"
+
+
+def _build_critical_line(move: dict, player_color: str, index: int) -> str:
+    cp_loss = move.get("cp_loss", 0) or 0
+    detail = (
+        f"  {index}. Move {move.get('move_number', '?')} ({player_color}): played {move.get('move_san', '?')} "
+        f"[{move.get('classification', 'good')}, -{cp_loss:.0f}cp]."
+    )
+    if move.get("move_summary"):
+        detail += f" Played fact: {move['move_summary']}."
+    if move.get("best_move_san"):
+        detail += f" Best was {move['best_move_san']}"
+        if move.get("best_move_summary"):
+            detail += f" ({move['best_move_summary']})"
+        detail += "."
+    best_line = _best_line_preview(move)
+    if best_line != "n/a":
+        detail += f" PV: {best_line}."
+    return detail
 
 
 def _build_prompt(analysis: dict, player_color: str, username: str = None) -> str:
@@ -44,7 +165,6 @@ def _build_prompt(analysis: dict, player_color: str, username: str = None) -> st
 
     player_name = username or (white if player_color == "white" else black)
 
-    # Find top mistakes/blunders for the player
     player_moves = [m for m in moves if m.get("color") == player_color]
     critical = sorted(
         [m for m in player_moves if m.get("classification") in ("blunder", "mistake")],
@@ -52,20 +172,12 @@ def _build_prompt(analysis: dict, player_color: str, username: str = None) -> st
         reverse=True,
     )[:5]
 
-    critical_text = ""
-    for i, m in enumerate(critical, 1):
-        move_num = m.get("move_number", "?")
-        san = m.get("move_san", "?")
-        best = m.get("best_move_san", "?")
-        cp = m.get("cp_loss", 0)
-        cls = m.get("classification", "mistake")
-        critical_text += (
-            f"  {i}. Move {move_num} ({player_color}): played {san} [{cls}, -{cp:.0f}cp]. "
-            f"Best was {best}.\n"
-        )
-
+    critical_text = "\n".join(
+        _build_critical_line(move, player_color, index)
+        for index, move in enumerate(critical, 1)
+    )
     if not critical_text:
-        critical_text = "  No critical mistakes found — you played very well!\n"
+        critical_text = "  No critical mistakes found — you played very well!"
 
     prompt = f"""You are an expert chess coach analyzing a game for player "{player_name}" who played as {player_color}.
 
@@ -84,8 +196,13 @@ PLAYER STATISTICS (for {player_color}):
 
 CRITICAL MOMENTS (top errors by centipawn loss):
 {critical_text}
-Please provide a structured coaching report with the following sections:
 
+Instructions:
+- Treat "Played fact", "Best was (...)", and "PV" as authoritative chess facts.
+- Do not invent piece identities, captures, or square contents that are not explicitly supported by those facts.
+- Prefer concrete, position-specific explanations over generic advice.
+
+Please provide a structured coaching report with the following sections:
 1. **Game Overview** (2-3 sentences summarizing how the game went)
 2. **Critical Mistakes Explained** (for each critical moment above: why the move was bad, what was happening positionally/tactically, and what the better move would have achieved)
 3. **Patterns & Weaknesses** (what patterns do these mistakes reveal about areas to improve?)
@@ -104,20 +221,21 @@ async def get_coaching(
     api_key: str = None,
     model: str = None,
 ) -> str:
-    client = _get_client(api_key)
-    chosen_model = model or os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
+    config = _get_llm_config(api_key=api_key, model=model)
+    client = _get_client(config)
     prompt = _build_prompt(analysis, player_color, username)
 
     logger.info(
-        "llm coaching request model=%s player_color=%s moves=%s prompt_preview=%s",
-        chosen_model,
+        "llm coaching request provider=%s model=%s player_color=%s moves=%s prompt_preview=%s",
+        config.provider,
+        config.model,
         player_color,
         len(analysis.get("moves", [])),
         _preview_text(prompt),
     )
 
     response = await client.chat.completions.create(
-        model=chosen_model,
+        model=config.model,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=1024,
         temperature=0.7,
@@ -125,8 +243,9 @@ async def get_coaching(
 
     content = response.choices[0].message.content or "No coaching response received."
     logger.info(
-        "llm coaching response model=%s preview=%s",
-        chosen_model,
+        "llm coaching response provider=%s model=%s preview=%s",
+        config.provider,
+        config.model,
         _preview_text(content),
     )
     return content
@@ -155,13 +274,16 @@ def _build_game_brief(analysis: dict, player_color: str, username: str = None) -
     critical_lines = []
     for move in critical:
         cp_loss = move.get("cp_loss", 0) or 0
-        best = move.get("best_move_san")
         detail = (
             f"move {move.get('move_number', '?')} {move.get('color', '?')} {move.get('move_san', '?')} "
             f"[{move.get('classification', 'good')}, loss={cp_loss:.0f}cp"
         )
-        if best:
-            detail += f", best={best}"
+        if move.get("move_summary"):
+            detail += f", played={move['move_summary']}"
+        if move.get("best_move_san"):
+            detail += f", best={move['best_move_san']}"
+        if move.get("best_move_summary"):
+            detail += f", best_fact={move['best_move_summary']}"
         detail += "]"
         critical_lines.append(detail)
 
@@ -205,12 +327,69 @@ def _build_move_context_lines(moves: list[dict], player_color: str, target_indic
         line = f"{prefix} idx={idx} move={move_num} color={color} role={role} san={san} class={cls}"
         if cp_loss > 0:
             line += f" loss={cp_loss:.0f}cp"
-        best = move.get("best_move_san")
-        if best and cls not in ("best", "excellent", "good"):
-            line += f" best={best}"
+        if move.get("move_summary"):
+            line += f" played=\"{move['move_summary']}\""
+        if move.get("best_move_san") and cls not in ("best", "excellent", "good"):
+            line += f" best={move['best_move_san']}"
         lines.append(line)
 
     return "\n".join(lines)
+
+
+def _build_target_move_fact_blocks(moves: list[dict], player_color: str, target_indices: list[int]) -> str:
+    blocks = []
+    for idx in target_indices:
+        move = moves[idx]
+        role = _move_role(move, player_color)
+        cp_loss = move.get("cp_loss", 0) or 0
+        eval_before = move.get("eval_before", "n/a")
+        eval_after = move.get("eval_after", "n/a")
+        blocks.append(
+            "\n".join([
+                f"TARGET idx={idx} role={role} color={move.get('color', '?')} move_number={move.get('move_number', '?')}",
+                f"played_move={move.get('move_san', '?')}",
+                f"played_fact={move.get('move_summary') or 'n/a'}",
+                f"classification={move.get('classification', 'good')}",
+                f"cp_loss={cp_loss:.0f}",
+                f"eval_before={eval_before}",
+                f"eval_after={eval_after}",
+                f"best_move={move.get('best_move_san') or 'n/a'}",
+                f"best_move_fact={move.get('best_move_summary') or 'n/a'}",
+                f"best_line={_best_line_preview(move)}",
+                f"fen_before={move.get('fen_before') or 'n/a'}",
+            ])
+        )
+    return "\n\n".join(blocks)
+
+
+def _deterministic_feedback(move: dict, player_color: str) -> str | None:
+    classification = move.get("classification")
+    cp_loss = move.get("cp_loss", 0) or 0
+    if classification not in ("inaccuracy", "mistake", "blunder") or cp_loss < 80:
+        return None
+
+    role = _move_role(move, player_color)
+    best_move = move.get("best_move_san")
+    best_fact = _sentence_case(move.get("best_move_summary"))
+    best_line = _best_line_preview(move)
+    if not best_move or not best_fact:
+        return None
+
+    if move.get("best_move_is_checkmate"):
+        if role == "player":
+            return f"You missed {best_move}. {best_fact}. That was a forced tactical finish."
+        return f"This gave you a winning chance: {best_move}. {best_fact}. That was a forced tactical finish."
+
+    if move.get("best_move_is_capture") and move.get("best_move_captured_piece"):
+        if role == "player":
+            feedback = f"You missed {best_move}. {best_fact}."
+        else:
+            feedback = f"This gave you a tactical chance: {best_move}. {best_fact}."
+        if best_line != "n/a":
+            feedback += f" The best line starts {best_line}."
+        return feedback
+
+    return None
 
 
 def _build_per_move_chunk_prompt(
@@ -228,6 +407,7 @@ def _build_per_move_chunk_prompt(
 
     player_name = username or (white if player_color == "white" else black)
     move_window = _build_move_context_lines(moves, player_color, target_indices)
+    target_blocks = _build_target_move_fact_blocks(moves, player_color, target_indices)
     game_brief = _build_game_brief(analysis, player_color, username)
     target_list = ", ".join(str(idx) for idx in target_indices)
     strict_block = ""
@@ -248,12 +428,15 @@ Rules:
 - Respond with ONLY a JSON array. No markdown or extra text.
 - Return exactly one item for every target move index: {target_list}
 - Each item must be {{"move_index": <number>, "feedback": "<text>"}}
-- Keep each feedback to at most 2 sentences and about 35 words.
+- Keep each feedback to at most 2 sentences and about 45 words.
 - For the player's strong moves, explain the idea or strength briefly.
 - For the player's weak moves, explain what went wrong and what the better move achieved.
 - For the opponent's strong moves, explain the threat or idea created against the player.
 - For the opponent's weak moves, explain the chance it gave the player.
 - Use natural coaching language like "You found...", "Your opponent created...", "This gave you a chance...".
+- Treat `played_fact`, `best_move_fact`, and `best_line` as authoritative.
+- Never invent piece identities, captures, or square contents that are not explicitly supported by those facts.
+- If a fact is missing, stay generic instead of guessing.
 - Do not omit any target move.
 {strict_block}
 
@@ -261,6 +444,9 @@ GAME BRIEF:
 {game_brief}
 
 GAME: {white} vs {black} | Result: {result} | Opening: {opening}
+
+TARGET MOVE FACTS:
+{target_blocks}
 
 LOCAL MOVE WINDOW:
 {move_window}
@@ -465,8 +651,8 @@ async def get_per_move_coaching(
     target_move_indices: list[int] | None = None,
 ) -> list[dict]:
     """Return {move_index, feedback} dicts for the requested moves using chunked prompts."""
-    client = _get_client(api_key)
-    chosen_model = model or os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
+    config = _get_llm_config(api_key=api_key, model=model)
+    client = _get_client(config)
     moves = analysis.get("moves", [])
     if not moves:
         return []
@@ -480,8 +666,17 @@ async def get_per_move_coaching(
     if not requested_indices:
         return []
 
-    chunk_groups = _group_target_indices(requested_indices, PER_MOVE_CHUNK_SIZE)
     feedback_by_index: dict[int, str] = {}
+    for idx in requested_indices:
+        deterministic = _deterministic_feedback(moves[idx], player_color)
+        if deterministic:
+            feedback_by_index[idx] = deterministic
+
+    remaining_indices = [idx for idx in requested_indices if idx not in feedback_by_index]
+    if not remaining_indices:
+        return [{"move_index": idx, "feedback": feedback_by_index[idx]} for idx in requested_indices]
+
+    chunk_groups = _group_target_indices(remaining_indices, PER_MOVE_CHUNK_SIZE)
 
     async def process_group(group: list[int]) -> None:
         raw_error = None
@@ -490,7 +685,7 @@ async def get_per_move_coaching(
             try:
                 items, _ = await _request_per_move_group(
                     client,
-                    chosen_model,
+                    config.model,
                     analysis,
                     player_color,
                     group,
@@ -501,7 +696,7 @@ async def get_per_move_coaching(
                 raw_error = str(exc)
                 logger.warning(
                     "llm per-move parse failure model=%s strict=%s group=%s error=%s",
-                    chosen_model,
+                    config.model,
                     strict_json,
                     group,
                     raw_error,
@@ -525,7 +720,7 @@ async def get_per_move_coaching(
             detail = raw_error or f"LLM did not return feedback for move index {unresolved[0]}"
             logger.error(
                 "llm per-move unresolved single index model=%s index=%s error=%s",
-                chosen_model,
+                config.model,
                 unresolved[0],
                 detail,
             )
@@ -534,7 +729,7 @@ async def get_per_move_coaching(
         midpoint = len(unresolved) // 2
         logger.info(
             "llm per-move splitting unresolved group model=%s unresolved=%s left=%s right=%s",
-            chosen_model,
+            config.model,
             unresolved,
             unresolved[:midpoint],
             unresolved[midpoint:],

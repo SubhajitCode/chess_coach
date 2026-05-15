@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 
@@ -38,6 +38,26 @@ class MoveAnalysis(BaseModel):
     eval_after: Optional[float]
     best_move_uci: Optional[str]
     best_move_san: Optional[str]
+    fen_before: Optional[str] = None
+    fen_after: Optional[str] = None
+    best_line_san: list[str] = Field(default_factory=list)
+    best_line_uci: list[str] = Field(default_factory=list)
+    move_piece: Optional[str] = None
+    move_from: Optional[str] = None
+    move_to: Optional[str] = None
+    move_captured_piece: Optional[str] = None
+    move_is_capture: bool = False
+    move_is_check: bool = False
+    move_is_checkmate: bool = False
+    move_summary: Optional[str] = None
+    best_move_piece: Optional[str] = None
+    best_move_from: Optional[str] = None
+    best_move_to: Optional[str] = None
+    best_move_captured_piece: Optional[str] = None
+    best_move_is_capture: bool = False
+    best_move_is_check: bool = False
+    best_move_is_checkmate: bool = False
+    best_move_summary: Optional[str] = None
     cp_loss: Optional[float]
     classification: str
 

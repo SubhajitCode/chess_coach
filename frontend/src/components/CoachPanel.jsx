@@ -9,6 +9,13 @@ const CLASSIFICATION_LABEL = {
   blunder: { icon: '??', label: 'Blunder', color: 'text-red-400' },
 }
 
+function formatEval(cp) {
+  if (cp == null) return null
+  if (cp >= 9000) return 'M+'
+  if (cp <= -9000) return 'M-'
+  return `${cp > 0 ? '+' : ''}${(cp / 100).toFixed(2)}`
+}
+
 export default function CoachPanel({
   moveCoaching,
   currentIndex,
@@ -28,6 +35,10 @@ export default function CoachPanel({
   const moveOwnerClass = isPlayerMove
     ? 'bg-blue-900/40 text-blue-300 border-blue-700/60'
     : 'bg-violet-900/30 text-violet-300 border-violet-700/60'
+  const bestLine = (currentMove?.best_line_san || []).slice(0, 4).join(' ')
+  const evalSwing = currentMove?.eval_before != null && currentMove?.eval_after != null
+    ? `${formatEval(currentMove.eval_before)} -> ${formatEval(currentMove.eval_after)}`
+    : null
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
@@ -121,6 +132,36 @@ export default function CoachPanel({
                     {currentMove?.move_san}
                   </span>
                 </div>
+                <div className="rounded-lg border border-gray-700 bg-gray-950/60 p-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                    Engine evidence
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    {currentMove?.cp_loss != null && (
+                      <FactPill label="CP loss" value={`${Math.round(currentMove.cp_loss)} cp`} />
+                    )}
+                    {evalSwing && (
+                      <FactPill label="Eval" value={evalSwing} />
+                    )}
+                    {currentMove?.best_move_san && (
+                      <FactPill label="Best move" value={currentMove.best_move_san} mono />
+                    )}
+                    {currentMove?.best_move_summary && (
+                      <FactPill label="Best idea" value={currentMove.best_move_summary} />
+                    )}
+                  </div>
+                  {currentMove?.move_summary && (
+                    <div className="mt-2 text-xs text-gray-300">
+                      <span className="text-gray-500">Played:</span> {currentMove.move_summary}
+                    </div>
+                  )}
+                  {bestLine && (
+                    <div className="mt-2 text-xs text-gray-300">
+                      <span className="text-gray-500">Best line:</span>{' '}
+                      <span className="font-mono text-emerald-300">{bestLine}</span>
+                    </div>
+                  )}
+                </div>
                 <div className="prose prose-invert prose-sm max-w-none text-gray-300
                   prose-strong:text-gray-200 prose-p:my-1">
                   <ReactMarkdown>{feedback}</ReactMarkdown>
@@ -150,6 +191,15 @@ export default function CoachPanel({
           </p>
         )}
       </div>
+    </div>
+  )
+}
+
+function FactPill({ label, value, mono = false }) {
+  return (
+    <div className="rounded-md border border-gray-800 bg-gray-900/80 px-2.5 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">{label}</div>
+      <div className={`text-gray-200 ${mono ? 'font-mono' : ''}`}>{value}</div>
     </div>
   )
 }

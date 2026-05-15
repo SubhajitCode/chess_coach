@@ -18,6 +18,32 @@ const CLASSIFICATION_BADGE = {
 }
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+const ELO_CALIBRATION_POINTS = [
+  [0, 2500],
+  [10, 2200],
+  [30, 1800],
+  [60, 1400],
+  [120, 800],
+  [200, 200],
+]
+
+function estimateElo(avgCpLoss) {
+  if (avgCpLoss == null || Number.isNaN(avgCpLoss)) return null
+
+  const normalizedCpLoss = Math.max(0, avgCpLoss)
+
+  for (let index = 0; index < ELO_CALIBRATION_POINTS.length - 1; index += 1) {
+    const [leftCp, leftElo] = ELO_CALIBRATION_POINTS[index]
+    const [rightCp, rightElo] = ELO_CALIBRATION_POINTS[index + 1]
+    if (normalizedCpLoss <= rightCp) {
+      const span = rightCp - leftCp
+      const progress = span === 0 ? 0 : (normalizedCpLoss - leftCp) / span
+      return Math.round(Math.max(200, Math.min(2800, leftElo + (rightElo - leftElo) * progress)))
+    }
+  }
+
+  return ELO_CALIBRATION_POINTS[ELO_CALIBRATION_POINTS.length - 1][1]
+}
 
 function prettifyOpening(raw) {
   if (!raw) return null
@@ -119,13 +145,14 @@ export default function Analysis() {
         const cached = res.data
         setStreamedMoves(cached.moves || [])
 
-        // Enrich summary with ELO if not present (cache predates feature)
+        // Recompute the displayed estimate from move data so cached analyses
+        // pick up calibration changes without needing cache invalidation.
         let cachedSummary = cached.summary || null
-        if (cachedSummary && !cachedSummary.estimated_elo) {
+        if (cachedSummary) {
           const playerMoves = (cached.moves || []).filter(m => m.color === playerColor)
           if (playerMoves.length > 0) {
             const avgCpLoss = playerMoves.reduce((acc, m) => acc + (m.cp_loss || 0), 0) / playerMoves.length
-            cachedSummary = { ...cachedSummary, estimated_elo: Math.max(200, Math.min(2800, Math.round(2500 * Math.pow(0.97, avgCpLoss)))) }
+            cachedSummary = { ...cachedSummary, estimated_elo: estimateElo(avgCpLoss) }
           }
         }
         setSummary(cachedSummary)
@@ -679,10 +706,7 @@ function SummaryPanel({ summary, streamedMoves, playerColor, analyzing, opening 
     ? playerMoves.reduce((acc, m) => acc + (m.cp_loss || 0), 0) / playerMoves.length
     : null
 
-  // Rough ELO estimate matching backend formula: 2500 * 0.97^avgCpLoss
-  const liveElo = liveAvgCpLoss != null
-    ? Math.max(200, Math.min(2800, Math.round(2500 * Math.pow(0.97, liveAvgCpLoss))))
-    : null
+  const liveElo = estimateElo(liveAvgCpLoss)
 
   const s = summary || {
     blunders: liveBlunders,
