@@ -20,6 +20,13 @@ THRESHOLDS = {
 }
 
 
+def _estimate_elo(avg_cp_loss: float) -> int:
+    """Rough ELO estimate from average centipawn loss per move."""
+    # Calibrated: ACPL~10 ≈ 2200, ACPL~30 ≈ 1800, ACPL~60 ≈ 1400, ACPL~120 ≈ 800
+    elo = round(2500 * (0.97 ** avg_cp_loss))
+    return max(200, min(2800, elo))
+
+
 def classify_move(cp_loss: float) -> str:
     if cp_loss <= THRESHOLDS["best"]:
         return "best"
@@ -150,6 +157,8 @@ def analyze_pgn(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: str = N
         excellent_moves=counts["excellent"],
         best_moves=counts["best"],
         accuracy=accuracy,
+        avg_cp_loss=round(sum(m.cp_loss for m in player_moves) / total_player, 1) if total_player > 0 else None,
+        estimated_elo=_estimate_elo(sum(m.cp_loss for m in player_moves) / total_player) if total_player > 0 else None,
     )
 
     return AnalysisResult(
@@ -192,6 +201,8 @@ def _build_summary(moves_data: list, player_color: str) -> dict:
         "excellent_moves": counts["excellent"],
         "best_moves": counts["best"],
         "accuracy": accuracy,
+        "avg_cp_loss": round(sum(m["cp_loss"] for m in player_moves) / total_player, 1) if total_player > 0 else None,
+        "estimated_elo": _estimate_elo(sum(m["cp_loss"] for m in player_moves) / total_player) if total_player > 0 else None,
     }
 
 

@@ -29,6 +29,15 @@ uvicorn main:app --reload
 ```
 Backend runs at: http://localhost:8000
 
+### VS Code debugging
+Open the repository root in VS Code and use the included Run and Debug profile:
+
+1. Select **Python: FastAPI backend**
+2. Start debugging to launch `uvicorn main:app --reload` from `backend/`
+3. Set breakpoints anywhere under `backend/` and call the API from the frontend or browser
+
+The workspace is configured to use `backend/venv/bin/python` and load environment variables from `backend/.env`.
+
 ### Frontend
 ```bash
 cd frontend

@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Chessboard } from 'react-chessboard'
 import { Chess } from 'chess.js'
-import { analyzeGameStream, getCoaching, getCachedAnalysis, computePgnHash } from '../api/chess'
+import { analyzeGameStream, getPerMoveCoaching, getCachedPerMoveCoaching, getCachedAnalysis, computePgnHash } from '../api/chess'
 import MoveTable from '../components/MoveTable'
 import EvalBar from '../components/EvalBar'
 import EvalChart from '../components/EvalChart'
@@ -28,6 +28,18 @@ function prettifyOpening(raw) {
     return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ')
   }
   return raw
+}
+
+function extractPgnHeaders(pgn) {
+  if (!pgn) return {}
+  const headers = {}
+  const lines = pgn.split('\n')
+  for (const line of lines) {
+    const m = line.match(/^\[(\w+)\s+"([^"]*)"\]/)
+    if (m) headers[m[1]] = m[2]
+    if (line.trim() === '' && Object.keys(headers).length > 0 && !line.startsWith('[')) break
+  }
+  return headers
 }
 
 function parsePgnMoves(pgn) {
@@ -81,8 +93,10 @@ export default function Analysis() {
   const [analyzedCount, setAnalyzedCount] = useState(0)
 
   // Coaching
-  const [coaching, setCoaching] = useState(null)
+  const [moveCoaching, setMoveCoaching] = useState({}) // map: move_index -> feedback string for all moves
   const [coachLoading, setCoachLoading] = useState(false)
+  const [coachError, setCoachError] = useState(null)
+  const [pgnHash, setPgnHash] = useState(null)
 
   const [depth, setDepth] = useState(18)
   const [trackLatest, setTrackLatest] = useState(true)
@@ -98,16 +112,53 @@ export default function Analysis() {
     ;(async () => {
       try {
         const hash = await computePgnHash(game.pgn)
+        if (cancelled) return
+        setPgnHash(hash)
         const res = await getCachedAnalysis(hash)
         if (cancelled) return
         const cached = res.data
         setStreamedMoves(cached.moves || [])
-        setSummary(cached.summary || null)
+
+        // Enrich summary with ELO if not present (cache predates feature)
+        let cachedSummary = cached.summary || null
+        if (cachedSummary && !cachedSummary.estimated_elo) {
+          const playerMoves = (cached.moves || []).filter(m => m.color === playerColor)
+          if (playerMoves.length > 0) {
+            const avgCpLoss = playerMoves.reduce((acc, m) => acc + (m.cp_loss || 0), 0) / playerMoves.length
+            cachedSummary = { ...cachedSummary, estimated_elo: Math.max(200, Math.min(2800, Math.round(2500 * Math.pow(0.97, avgCpLoss)))) }
+          }
+        }
+        setSummary(cachedSummary)
+
+        // Extract opening from PGN headers if not in cached meta
+        const pgnHeaders = extractPgnHeaders(game.pgn)
+        const openingFromPgn = pgnHeaders.Opening || pgnHeaders.ECOUrl || null
+        if (openingFromPgn) setGameMeta(prev => ({ ...(prev || {}), opening: openingFromPgn }))
+
         setFromCache(true)
         setTrackLatest(false)
         setCurrentIndex(-1)  // start at beginning
+
+        // Also try loading cached per-move coaching
+        try {
+          const coachRes = await getCachedPerMoveCoaching(hash)
+          if (!cancelled && coachRes.data?.coaching) {
+            const coaching = coachRes.data.coaching
+            if (coaching.length >= (cached.moves || []).length) {
+              const map = {}
+              coaching.forEach(c => { map[c.move_index] = c.feedback })
+              setMoveCoaching(map)
+            }
+          }
+        } catch {
+          // No cached coaching — will be generated after analysis
+        }
       } catch {
-        // No cache — normal flow
+        // No cache — compute hash for later use
+        try {
+          const hash = await computePgnHash(game.pgn)
+          if (!cancelled) setPgnHash(hash)
+        } catch { /* ignore */ }
       }
     })()
     return () => { cancelled = true }
@@ -169,11 +220,18 @@ export default function Analysis() {
     setStreamedMoves([])
     setSummary(null)
     setGameMeta(null)
-    setCoaching(null)
+    setMoveCoaching({})
+    setCoachLoading(false)
+    setCoachError(null)
     setAnalyzedCount(0)
     setTrackLatest(true)
     setCurrentIndex(-1)
     setFromCache(false)
+
+    // Capture moves and summary to trigger coaching after stream
+    const collectedMovesRef = { current: [] }
+    const collectedSummaryRef = { current: null }
+    const collectedMetaRef = { current: null }
 
     abortRef.current = analyzeGameStream({
       pgn: game.pgn,
@@ -181,6 +239,7 @@ export default function Analysis() {
       playerColor,
       onMeta: (meta) => {
         setGameMeta(meta)
+        collectedMetaRef.current = meta
         if (typeof meta.total_moves === 'number') {
           setTotalMoves(meta.total_moves)
         }
@@ -188,16 +247,44 @@ export default function Analysis() {
       onMove: (move) => {
         setStreamedMoves(prev => {
           const updated = [...prev, move]
+          collectedMovesRef.current = updated
           return updated
         })
         setAnalyzedCount(c => c + 1)
       },
       onSummary: (s) => {
         setSummary(s)
+        collectedSummaryRef.current = s
       },
-      onDone: () => {
+      onDone: async () => {
         setAnalyzing(false)
         setTrackLatest(false)
+        // Auto-generate per-move coaching
+        const moves = collectedMovesRef.current
+        const summ = collectedSummaryRef.current
+        if (moves.length > 0 && pgnHash) {
+          const analysis = {
+            ...(collectedMetaRef.current || {}),
+            white: game.white,
+            black: game.black,
+            result: game.result,
+            moves,
+            summary: summ,
+          }
+          setCoachLoading(true)
+          try {
+            const res = await getPerMoveCoaching(pgnHash, analysis, playerColor, username)
+            const map = {}
+            res.data.coaching.forEach(c => { map[c.move_index] = c.feedback })
+            setMoveCoaching(map)
+            setCoachError(null)
+          } catch (err) {
+            const detail = err?.response?.data?.detail || err?.message || 'Coaching failed'
+            setCoachError(detail)
+          } finally {
+            setCoachLoading(false)
+          }
+        }
       },
       onError: (msg) => {
         setAnalyzeError(msg)
@@ -251,14 +338,19 @@ export default function Analysis() {
     summary,
   } : null
 
-  const handleGetCoaching = async () => {
-    if (!fullAnalysis) return
+  // Manually re-request per-move coaching (e.g. after cache load with no coaching yet)
+  const handleRequestCoaching = async () => {
+    if (!fullAnalysis || !pgnHash) return
     setCoachLoading(true)
+    setCoachError(null)
     try {
-      const res = await getCoaching(fullAnalysis, playerColor, username)
-      setCoaching(res.data.coaching)
+      const res = await getPerMoveCoaching(pgnHash, fullAnalysis, playerColor, username)
+      const map = {}
+      res.data.coaching.forEach(c => { map[c.move_index] = c.feedback })
+      setMoveCoaching(map)
     } catch (err) {
-      setCoaching('Failed to get coaching feedback. Please check your OpenRouter API key in backend/.env')
+      const detail = err?.response?.data?.detail || err?.message || 'Coaching failed'
+      setCoachError(detail)
     } finally {
       setCoachLoading(false)
     }
@@ -462,6 +554,23 @@ export default function Analysis() {
                 ← Use arrow keys or click moves to navigate
               </div>
             )}
+
+            {/* AI Coach Panel — left column, below the board controls */}
+            {(streamedMoves.length > 0 || Object.keys(moveCoaching).length > 0) && (
+              <div className="w-[548px]">
+                <CoachPanel
+                  moveCoaching={moveCoaching}
+                  currentIndex={currentIndex}
+                  currentMove={currentMove}
+                  playerColor={playerColor}
+                  loading={coachLoading}
+                  error={coachError}
+                  hasAnalysis={!!fullAnalysis}
+                  onRequest={handleRequestCoaching}
+                  analyzing={analyzing}
+                />
+              </div>
+            )}
           </div>
 
           {/* Right panel */}
@@ -485,7 +594,13 @@ export default function Analysis() {
 
             {/* Summary stats */}
             {(summary || (analyzing && streamedMoves.length > 0)) && (
-              <SummaryPanel summary={summary} streamedMoves={streamedMoves} playerColor={playerColor} analyzing={analyzing} />
+              <SummaryPanel
+                summary={summary}
+                streamedMoves={streamedMoves}
+                playerColor={playerColor}
+                analyzing={analyzing}
+                opening={prettifyOpening(gameMeta?.opening || game?.opening)}
+              />
             )}
 
             {/* Eval Chart */}
@@ -525,16 +640,6 @@ export default function Analysis() {
                 })}
               />
             )}
-
-            {/* Coach Panel — shown after analysis */}
-            {(streamedMoves.length > 0 || coaching) && (
-              <CoachPanel
-                coaching={coaching}
-                loading={coachLoading}
-                hasAnalysis={!!fullAnalysis}
-                onRequest={handleGetCoaching}
-              />
-            )}
           </div>
         </div>
       </main>
@@ -554,9 +659,8 @@ function NavButton({ onClick, label, title }) {
   )
 }
 
-function SummaryPanel({ summary, streamedMoves, playerColor, analyzing }) {
+function SummaryPanel({ summary, streamedMoves, playerColor, analyzing, opening }) {
   // Live-compute stats from streamed moves if summary not yet received
-  const live = !summary && streamedMoves.length > 0
   const playerMoves = streamedMoves.filter(m => m.color === playerColor)
   const liveBlunders = playerMoves.filter(m => m.classification === 'blunder').length
   const liveMistakes = playerMoves.filter(m => m.classification === 'mistake').length
@@ -571,6 +675,15 @@ function SummaryPanel({ summary, streamedMoves, playerColor, analyzing }) {
       ) / playerMoves.length)
     : null
 
+  const liveAvgCpLoss = playerMoves.length > 0
+    ? playerMoves.reduce((acc, m) => acc + (m.cp_loss || 0), 0) / playerMoves.length
+    : null
+
+  // Rough ELO estimate matching backend formula: 2500 * 0.97^avgCpLoss
+  const liveElo = liveAvgCpLoss != null
+    ? Math.max(200, Math.min(2800, Math.round(2500 * Math.pow(0.97, liveAvgCpLoss))))
+    : null
+
   const s = summary || {
     blunders: liveBlunders,
     mistakes: liveMistakes,
@@ -579,6 +692,7 @@ function SummaryPanel({ summary, streamedMoves, playerColor, analyzing }) {
     excellent_moves: liveExcellent,
     best_moves: liveBest,
     accuracy: liveAccuracy,
+    estimated_elo: liveElo,
   }
 
   return (
@@ -587,10 +701,33 @@ function SummaryPanel({ summary, streamedMoves, playerColor, analyzing }) {
         <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
           Game Summary {analyzing && <span className="text-blue-400 normal-case font-normal text-xs ml-1">(live)</span>}
         </h3>
-        {s.accuracy !== null && (
-          <div className="text-2xl font-bold text-blue-400">{s.accuracy}%</div>
-        )}
+        <div className="flex items-center gap-3">
+          {s.estimated_elo && (
+            <div className="text-right">
+              <div className="text-xl font-bold text-purple-400">~{s.estimated_elo}</div>
+              <div className="text-xs text-gray-500">Est. ELO</div>
+            </div>
+          )}
+          {s.accuracy !== null && (
+            <div className="text-right">
+              <div className="text-2xl font-bold text-blue-400">{s.accuracy}%</div>
+              <div className="text-xs text-gray-500">Accuracy</div>
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Opening badge */}
+      {opening && (
+        <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-gray-800/60 rounded-lg border border-gray-700">
+          <span className="text-base">♟</span>
+          <div>
+            <div className="text-xs text-gray-500 uppercase tracking-wide font-medium">Opening</div>
+            <div className="text-sm text-gray-200 font-semibold">{opening}</div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-2">
         <StatBadge label="Blunders" value={s.blunders} color="text-red-400" />
         <StatBadge label="Mistakes" value={s.mistakes} color="text-orange-400" />

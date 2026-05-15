@@ -25,6 +25,8 @@ async def fetch_games(username: str, year: int = None, month: int = None, max_ga
     games = data.get("games", [])
     result = []
     for g in games[-max_games:]:
+        pgn = g.get("pgn", "")
+        opening = _extract_pgn_header(pgn, "Opening") or _extract_pgn_header(pgn, "ECOUrl") or ""
         result.append({
             "source": "chesscom",
             "white": g.get("white", {}).get("username", ""),
@@ -35,9 +37,17 @@ async def fetch_games(username: str, year: int = None, month: int = None, max_ga
             "time_control": g.get("time_control", ""),
             "end_time": g.get("end_time"),
             "url": g.get("url", ""),
-            "pgn": g.get("pgn", ""),
+            "pgn": pgn,
+            "opening": opening,
         })
     return result
+
+
+def _extract_pgn_header(pgn: str, key: str) -> str:
+    """Extract a PGN header value by key."""
+    import re
+    m = re.search(rf'\[{key}\s+"([^"]+)"\]', pgn)
+    return m.group(1) if m else ""
 
 
 def _parse_result(white_result: str, black_result: str) -> str:

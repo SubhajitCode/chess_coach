@@ -36,6 +36,15 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS move_coaching (
+                pgn_hash   TEXT NOT NULL,
+                move_index INTEGER NOT NULL,
+                feedback   TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (pgn_hash, move_index)
+            )
+        """)
 
 
 def pgn_hash(pgn: str) -> str:
@@ -92,3 +101,27 @@ def delete_analysis(h: str) -> bool:
     with _db() as conn:
         cur = conn.execute("DELETE FROM analysis_cache WHERE pgn_hash = ?", (h,))
     return cur.rowcount > 0
+
+
+def save_move_coaching(pgn_hash: str, coaching: list[dict]) -> None:
+    """Save per-move coaching feedback. Each dict must have move_index and feedback."""
+    with _db() as conn:
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO move_coaching (pgn_hash, move_index, feedback)
+            VALUES (?, ?, ?)
+            """,
+            [(pgn_hash, item["move_index"], item["feedback"]) for item in coaching],
+        )
+
+
+def get_move_coaching(pgn_hash: str) -> list[dict] | None:
+    """Return per-move coaching for a game, or None if not cached."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT move_index, feedback FROM move_coaching WHERE pgn_hash = ? ORDER BY move_index",
+            (pgn_hash,),
+        ).fetchall()
+    if not rows:
+        return None
+    return [{"move_index": r["move_index"], "feedback": r["feedback"]} for r in rows]

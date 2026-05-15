@@ -21,3 +21,4 @@ frontend/dist/
 .playwright
 chess_analyzer.db
 backend/chess_analyzer.db
+.vscode

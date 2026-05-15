@@ -22,6 +22,13 @@ class CoachRequest(BaseModel):
     username: Optional[str] = None
 
 
+class PerMoveCoachRequest(BaseModel):
+    pgn_hash: str
+    analysis: dict
+    player_color: str
+    username: Optional[str] = None
+
+
 class MoveAnalysis(BaseModel):
     move_number: int
     color: str
@@ -45,6 +52,8 @@ class GameSummary(BaseModel):
     excellent_moves: int
     best_moves: int
     accuracy: float
+    avg_cp_loss: Optional[float] = None
+    estimated_elo: Optional[int] = None
 
 
 class AnalysisResult(BaseModel):
