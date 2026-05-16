@@ -125,8 +125,11 @@ export default function Analysis() {
   const [pgnHash, setPgnHash] = useState(null)
 
   const [depth, setDepth] = useState(18)
+  const [showArrows, setShowArrows] = useState(true)
   const [trackLatest, setTrackLatest] = useState(true)
   const [fromCache, setFromCache] = useState(false)
+  // Temporary board preview when hovering best-line steps in CoachPanel
+  const [bestLinePreview, setBestLinePreview] = useState(null) // { fen, from, to }
 
   const abortRef = useRef(null)
   const moveTableRef = useRef(null)
@@ -225,7 +228,48 @@ export default function Analysis() {
 
     return ch.fen()
   }, [boardMoves, currentIndex])
-  const boardPosition = currentFen.split(' ')[0]
+  // When hovering a best-line step, show that position; otherwise show current game position
+  const displayFen   = bestLinePreview?.fen ?? currentFen
+  const boardPosition = displayFen.split(' ')[0]
+
+  const analysisArrows = useMemo(() => {
+    // While hovering a best-line step, show only that move's arrow
+    if (bestLinePreview) {
+      return [{
+        startSquare: bestLinePreview.from,
+        endSquare:   bestLinePreview.to,
+        color: 'rgba(16, 185, 129, 0.9)',
+      }]
+    }
+
+    if (!showArrows) return []
+
+    const activeMove = currentIndex >= 0 ? boardMoves[currentIndex] : boardMoves[0]
+    if (!activeMove) return []
+
+    const arrows = []
+
+    // Best move arrow (Green)
+    if (activeMove.best_move_uci && activeMove.best_move_uci.length >= 4) {
+      arrows.push({
+        startSquare: activeMove.best_move_uci.slice(0, 2),
+        endSquare:   activeMove.best_move_uci.slice(2, 4),
+        color: 'rgba(16, 185, 129, 0.8)',
+      })
+    }
+
+    // Mistake / blunder arrow (Red)
+    const isMistake = activeMove.classification === 'mistake' || activeMove.classification === 'blunder'
+    if (isMistake && currentIndex >= 0 && activeMove.move_uci && activeMove.move_uci.length >= 4) {
+      arrows.push({
+        startSquare: activeMove.move_uci.slice(0, 2),
+        endSquare:   activeMove.move_uci.slice(2, 4),
+        color: 'rgba(239, 68, 68, 0.8)',
+      })
+    }
+
+    return arrows
+  }, [showArrows, currentIndex, boardMoves, bestLinePreview])
 
   const currentMove = streamedMoves[currentIndex] || parsedGameMoves[currentIndex] || null
   const currentEval = currentMove?.eval_after ?? null
@@ -434,6 +478,18 @@ export default function Analysis() {
                 {[10, 12, 15, 18, 20, 22].map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             </div>
+            <div className="flex items-center gap-1.5 ml-2 mr-2">
+              <label className="text-xs text-gray-400">Arrows</label>
+              <button
+                onClick={() => setShowArrows(!showArrows)}
+                className={`px-2 py-1 text-xs font-semibold rounded-lg border transition-all
+                  ${showArrows
+                    ? 'bg-emerald-900/30 border-emerald-600 text-emerald-400'
+                    : 'bg-gray-800 border-gray-600 text-gray-400'}`}
+              >
+                {showArrows ? 'ON' : 'OFF'}
+              </button>
+            </div>
             <button
               onClick={analyzing ? () => { abortRef.current?.abort(); setAnalyzing(false) } : handleAnalyze}
               className={`px-4 py-2 text-white text-sm font-semibold rounded-xl transition-all
@@ -504,9 +560,14 @@ export default function Analysis() {
               <EvalBar evalScore={currentEval} playerColor={playerColor} />
 
               {/* Board */}
-              <div className="w-[520px] rounded-xl overflow-hidden border border-gray-700 shadow-2xl">
+              <div className="w-[520px] rounded-xl overflow-hidden border border-gray-700 shadow-2xl relative">
+                {bestLinePreview && (
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-3 py-1 bg-emerald-900/90 border border-emerald-600 rounded-full text-[11px] text-emerald-300 font-medium pointer-events-none">
+                    Previewing best line
+                  </div>
+                )}
                 <Chessboard
-                  key={boardPosition}
+                  key={currentIndex}
                   options={{
                     id: `analysis-board-${playerColor}`,
                     position: boardPosition,
@@ -515,7 +576,8 @@ export default function Analysis() {
                     boardStyle: { borderRadius: '0' },
                     darkSquareStyle: { backgroundColor: '#4a7c59' },
                     lightSquareStyle: { backgroundColor: '#f0d9b5' },
-                    squareStyles: highlightSquares,
+                    squareStyles: bestLinePreview ? {} : highlightSquares,
+                    arrows: analysisArrows,
                   }}
                 />
               </div>
@@ -529,16 +591,16 @@ export default function Analysis() {
 
             {/* Navigation */}
             <div className="flex items-center gap-1.5 bg-gray-900 rounded-xl p-1.5 border border-gray-700">
-                <NavButton onClick={() => { setTrackLatest(false); setCurrentIndex(-1) }} label="⟨⟨" title="Start" />
-                <NavButton onClick={() => { setTrackLatest(false); setCurrentIndex(i => Math.max(-1, i - 1)) }} label="⟨" title="Previous (←)" />
+                <NavButton onClick={() => { setTrackLatest(false); setBestLinePreview(null); setCurrentIndex(-1) }} label="⟨⟨" title="Start" />
+                <NavButton onClick={() => { setTrackLatest(false); setBestLinePreview(null); setCurrentIndex(i => Math.max(-1, i - 1)) }} label="⟨" title="Previous (←)" />
                 <div className="flex-1 text-center text-xs text-gray-400">
                   {currentIndex < 0
                     ? <span className="text-gray-500">Start position</span>
                     : <span>Move {currentMove?.move_number} <span className="font-mono text-white font-semibold">{currentMove?.move_san}</span></span>
                   }
                 </div>
-                <NavButton onClick={() => { setTrackLatest(false); setCurrentIndex(i => Math.min(maxNavigableIndex, i + 1)) }} label="⟩" title="Next (→)" />
-                <NavButton onClick={() => { setTrackLatest(false); setCurrentIndex(maxNavigableIndex) }} label="⟩⟩" title="End" />
+                <NavButton onClick={() => { setTrackLatest(false); setBestLinePreview(null); setCurrentIndex(i => Math.min(maxNavigableIndex, i + 1)) }} label="⟩" title="Next (→)" />
+                <NavButton onClick={() => { setTrackLatest(false); setBestLinePreview(null); setCurrentIndex(maxNavigableIndex) }} label="⟩⟩" title="End" />
               </div>
 
             {/* Move classification badge */}
@@ -595,6 +657,8 @@ export default function Analysis() {
                   hasAnalysis={!!fullAnalysis}
                   onRequest={handleRequestCoaching}
                   analyzing={analyzing}
+                  onPreviewBestLineStep={setBestLinePreview}
+                  onResetBestLinePreview={() => setBestLinePreview(null)}
                 />
               </div>
             )}
