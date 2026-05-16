@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Chess } from 'chess.js'
 
@@ -23,8 +23,9 @@ const CLASSIFICATION_META = {
 
 function evalLabel(cp) {
   if (cp == null) return { text: '—', color: 'text-gray-400' }
-  if (cp >= 9000)  return { text: 'Checkmate', color: 'text-emerald-400' }
-  if (cp <= -9000) return { text: 'Getting mated', color: 'text-red-400' }
+  // After sign-flipping by caller, positive = good for the player, negative = bad
+  if (cp >= 9000)  return { text: 'Checkmate threat', color: 'text-emerald-400' }
+  if (cp <= -9000) return { text: 'Getting mated',    color: 'text-red-400' }
   const v = cp / 100
   if (v >= 3)    return { text: `Winning (+${v.toFixed(1)})`,             color: 'text-emerald-400' }
   if (v >= 1)    return { text: `Clearly better (+${v.toFixed(1)})`,      color: 'text-green-400' }
@@ -94,9 +95,12 @@ function decodeLine(fenBefore, uciList, limit = 5) {
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
-function EvalSwing({ before, after, cpLoss, isPlayerMove }) {
-  const beforeL = evalLabel(before)
-  const afterL  = evalLabel(after)
+function EvalSwing({ before, after, cpLoss, isPlayerMove, playerColor }) {
+  // Stockfish cp is always from White's perspective.
+  // Flip sign for Black so "Winning" / "Losing" reflects the player's situation.
+  const sign = playerColor === 'black' ? -1 : 1
+  const beforeL = evalLabel(before != null ? before * sign : before)
+  const afterL  = evalLabel(after  != null ? after  * sign : after)
   const loss    = cpLoss != null ? Math.round(cpLoss) : null
   const lossMsg = isPlayerMove ? cpLossDescription(loss) : null
 
@@ -131,10 +135,9 @@ function EvalSwing({ before, after, cpLoss, isPlayerMove }) {
   )
 }
 
-function BestMoveCard({ uci, san, summary, fenBefore, onHover, onLeave }) {
+function BestMoveCard({ uci, san, summary, fenBefore, onPreview, onExitPreview, isPreviewing }) {
   if (!san || !uci) return null
 
-  // Decode the best move into plain English from UCI + FEN
   let display = summary || san
   let icon = '?'
   try {
@@ -159,81 +162,167 @@ function BestMoveCard({ uci, san, summary, fenBefore, onHover, onLeave }) {
     }
   } catch { /* keep summary/san fallback */ }
 
+  const handleClick = () => {
+    if (isPreviewing) onExitPreview?.()
+    else onPreview?.()
+  }
+
   return (
-    <div
-      className="rounded-lg border border-emerald-800/50 bg-emerald-950/25 p-3 cursor-default transition-colors
-        hover:border-emerald-700/70 hover:bg-emerald-950/40"
-      onMouseEnter={onHover}
-      onMouseLeave={onLeave}
+    <button
+      onClick={handleClick}
+      className={`w-full text-left rounded-lg border p-3 transition-colors ${
+        isPreviewing
+          ? 'border-emerald-500 bg-emerald-950/50 ring-1 ring-emerald-700/50'
+          : 'border-emerald-800/50 bg-emerald-950/25 hover:border-emerald-600/70 hover:bg-emerald-950/40'
+      }`}
     >
       <div className="flex items-center justify-between mb-1.5">
         <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-600">
           ★ Engine's best move
         </div>
-        {onHover && (
-          <div className="text-[10px] text-emerald-800">hover → preview on board</div>
-        )}
+        <div className={`text-[10px] ${isPreviewing ? 'text-emerald-400' : 'text-emerald-800'}`}>
+          {isPreviewing ? '● on board' : 'click → preview'}
+        </div>
       </div>
       <div className="text-sm text-emerald-200 font-medium">{display}</div>
-    </div>
+    </button>
   )
 }
 
-function BestLineViewer({ uciList, fenBefore, onStepHover, onStepLeave }) {
+function BestLineViewer({ uciList, fenBefore, onStepPreview, onExitPreview, onPreviewModeChange }) {
   const steps = decodeLine(fenBefore, uciList)
+  const [activeIdx, setActiveIdx] = useState(null) // null = inactive
+  const isActive = activeIdx !== null
+  const activeIdxRef = useRef(activeIdx)
+  activeIdxRef.current = activeIdx
+
+  const activateStep = useCallback((idx) => {
+    const clamped = Math.max(0, Math.min(steps.length - 1, idx))
+    setActiveIdx(clamped)
+    onPreviewModeChange?.(true)
+    onStepPreview?.(steps[clamped])
+  }, [steps, onStepPreview, onPreviewModeChange])
+
+  const exit = useCallback(() => {
+    setActiveIdx(null)
+    onPreviewModeChange?.(false)
+    onExitPreview?.()
+  }, [onExitPreview, onPreviewModeChange])
+
+  // Keyboard: Down/Up to navigate, Escape to exit — capture phase beats Analysis.jsx's listener
+  useEffect(() => {
+    if (!isActive) return
+    const handler = (e) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault(); e.stopPropagation()
+        const next = Math.min(steps.length - 1, activeIdxRef.current + 1)
+        activateStep(next)
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault(); e.stopPropagation()
+        const prev = Math.max(0, activeIdxRef.current - 1)
+        activateStep(prev)
+      } else if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation()
+        exit()
+      }
+    }
+    window.addEventListener('keydown', handler, true) // capture phase
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [isActive, steps.length, activateStep, exit])
+
   if (!steps.length) return null
 
   return (
-    <div className="rounded-lg border border-gray-700 bg-gray-950/60 p-3">
+    <div className={`rounded-lg border p-3 transition-colors ${
+      isActive
+        ? 'border-emerald-600/60 bg-gray-950/70 ring-1 ring-emerald-800/40'
+        : 'border-gray-700 bg-gray-950/60'
+    }`}>
+      {/* Header row */}
       <div className="flex items-center justify-between mb-2.5">
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-          Best continuation ({steps.length} move{steps.length !== 1 ? 's' : ''})
-        </div>
-        {onStepHover && (
-          <div className="text-[10px] text-gray-600">hover each move → board preview</div>
+        <button
+          onClick={() => isActive ? exit() : activateStep(0)}
+          className={`text-[11px] font-semibold uppercase tracking-wide transition-colors ${
+            isActive ? 'text-emerald-400' : 'text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          {isActive ? '▶ Previewing line' : '▶ Preview best line'}
+          <span className="ml-1 font-normal normal-case">({steps.length} move{steps.length !== 1 ? 's' : ''})</span>
+        </button>
+
+        {isActive ? (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-gray-500">{activeIdx + 1}/{steps.length}</span>
+            <button
+              onClick={() => activateStep(activeIdx - 1)}
+              disabled={activeIdx === 0}
+              className="w-5 h-5 flex items-center justify-center rounded text-[11px] text-gray-400
+                hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default"
+              title="Previous step (↑)"
+            >‹</button>
+            <button
+              onClick={() => activateStep(activeIdx + 1)}
+              disabled={activeIdx === steps.length - 1}
+              className="w-5 h-5 flex items-center justify-center rounded text-[11px] text-gray-400
+                hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default"
+              title="Next step (↓)"
+            >›</button>
+            <button
+              onClick={exit}
+              className="w-5 h-5 flex items-center justify-center rounded text-[10px] text-gray-500
+                hover:bg-gray-700 hover:text-gray-300"
+              title="Exit preview (Esc)"
+            >✕</button>
+          </div>
+        ) : (
+          <span className="text-[10px] text-gray-600">click or ↓/↑ to step</span>
         )}
       </div>
-      <div className="flex flex-col gap-1">
-        {steps.map((step, i) => (
-          <div
-            key={i}
-            className="flex items-center gap-2.5 rounded-md px-2 py-1.5 cursor-default transition-colors
-              hover:bg-gray-800/60 group"
-            onMouseEnter={() => onStepHover?.(step)}
-            onMouseLeave={onStepLeave}
-          >
-            {/* Step number */}
-            <span className="text-[10px] text-gray-600 w-3 flex-shrink-0 text-right">{i + 1}.</span>
 
-            {/* W / B badge */}
-            <span className={`text-[10px] font-bold w-4 h-4 rounded flex-shrink-0 flex items-center justify-center
-              ${step.color === 'white' ? 'bg-gray-200 text-gray-900' : 'bg-gray-700 text-gray-200'}`}>
-              {step.color === 'white' ? 'W' : 'B'}
-            </span>
-
-            {/* Piece icon */}
-            <span className="text-base leading-none flex-shrink-0">{step.icon}</span>
-
-            {/* Plain English description */}
-            <span className="text-xs text-gray-300 flex-1 leading-snug">{step.description}</span>
-
-            {/* Capture / check badges */}
-            <div className="flex items-center gap-1 flex-shrink-0">
-              {step.isCapture && (
-                <span className="text-[10px] bg-orange-900/40 text-orange-400 px-1 rounded">×</span>
+      {/* Steps list */}
+      <div className="flex flex-col gap-0.5">
+        {steps.map((step, i) => {
+          const isThisActive = isActive && activeIdx === i
+          return (
+            <button
+              key={i}
+              onClick={() => activateStep(i)}
+              className={`flex items-center gap-2.5 rounded-md px-2 py-1.5 w-full text-left transition-colors ${
+                isThisActive
+                  ? 'bg-emerald-900/40 border border-emerald-700/50'
+                  : 'hover:bg-gray-800/60 border border-transparent'
+              }`}
+            >
+              <span className="text-[10px] text-gray-600 w-3 flex-shrink-0 text-right">{i + 1}.</span>
+              <span className={`text-[10px] font-bold w-4 h-4 rounded flex-shrink-0 flex items-center justify-center
+                ${step.color === 'white' ? 'bg-gray-200 text-gray-900' : 'bg-gray-700 text-gray-200'}`}>
+                {step.color === 'white' ? 'W' : 'B'}
+              </span>
+              <span className="text-base leading-none flex-shrink-0">{step.icon}</span>
+              <span className={`text-xs flex-1 leading-snug ${isThisActive ? 'text-emerald-200' : 'text-gray-300'}`}>
+                {step.description}
+              </span>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                {step.isCapture && (
+                  <span className="text-[10px] bg-orange-900/40 text-orange-400 px-1 rounded">×</span>
+                )}
+                {step.isCheck && (
+                  <span className="text-[10px] bg-yellow-900/40 text-yellow-400 px-1 rounded">+</span>
+                )}
+              </div>
+              {isThisActive && (
+                <span className="text-[10px] text-emerald-500 flex-shrink-0">●</span>
               )}
-              {step.isCheck && (
-                <span className="text-[10px] bg-yellow-900/40 text-yellow-400 px-1 rounded">+</span>
-              )}
-            </div>
-
-            {/* Hover cue */}
-            <span className="text-[10px] text-gray-700 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-              ←
-            </span>
-          </div>
-        ))}
+            </button>
+          )
+        })}
       </div>
+
+      {isActive && (
+        <div className="mt-2 text-[10px] text-gray-600 text-center">
+          ↑ ↓ to navigate · Esc to exit
+        </div>
+      )}
     </div>
   )
 }
@@ -252,6 +341,7 @@ export default function CoachPanel({
   analyzing,
   onPreviewBestLineStep,
   onResetBestLinePreview,
+  onPreviewModeChange,
 }) {
   const hasAnyCoaching  = Object.keys(moveCoaching).length > 0
   const isPlayerMove    = currentMove?.color === playerColor
@@ -264,16 +354,35 @@ export default function CoachPanel({
     ? 'bg-blue-900/40 text-blue-300 border-blue-700/60'
     : 'bg-violet-900/30 text-violet-300 border-violet-700/60'
 
-  const handleBestMoveHover = useCallback(() => {
+  // Track which preview is active: 'bestmove' | null
+  const [bestMovePreviewOn, setBestMovePreviewOn] = useState(false)
+
+  const handleBestMovePreview = useCallback(() => {
     const uci = currentMove?.best_move_uci
     const fen = currentMove?.fen_before
     if (!uci || !fen) return
+    setBestMovePreviewOn(true)
     onPreviewBestLineStep?.({ fen, from: uci.slice(0, 2), to: uci.slice(2, 4) })
   }, [currentMove, onPreviewBestLineStep])
 
-  const handleStepHover = useCallback((step) => {
+  const handleBestMoveExitPreview = useCallback(() => {
+    setBestMovePreviewOn(false)
+    onResetBestLinePreview?.()
+  }, [onResetBestLinePreview])
+
+  const handleLineStepPreview = useCallback((step) => {
+    setBestMovePreviewOn(false)
     onPreviewBestLineStep?.({ fen: step.fenAfter, from: step.from, to: step.to })
   }, [onPreviewBestLineStep])
+
+  const handleLineExitPreview = useCallback(() => {
+    onResetBestLinePreview?.()
+  }, [onResetBestLinePreview])
+
+  // Reset best-move card preview whenever we change moves
+  useEffect(() => {
+    setBestMovePreviewOn(false)
+  }, [currentIndex])
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
@@ -372,6 +481,7 @@ export default function CoachPanel({
                 after={currentMove.eval_after}
                 cpLoss={currentMove.cp_loss}
                 isPlayerMove={isPlayerMove}
+                playerColor={playerColor}
               />
             )}
 
@@ -382,18 +492,21 @@ export default function CoachPanel({
                 san={currentMove.best_move_san}
                 summary={currentMove.best_move_summary}
                 fenBefore={currentMove.fen_before}
-                onHover={onPreviewBestLineStep ? handleBestMoveHover : undefined}
-                onLeave={onResetBestLinePreview}
+                onPreview={handleBestMovePreview}
+                onExitPreview={handleBestMoveExitPreview}
+                isPreviewing={bestMovePreviewOn}
               />
             )}
 
             {/* Best continuation line */}
             {currentMove?.best_line_uci?.length > 1 && cls !== 'best' && (
               <BestLineViewer
+                key={`line-${currentIndex}`}
                 uciList={currentMove.best_line_uci}
                 fenBefore={currentMove.fen_before}
-                onStepHover={onPreviewBestLineStep ? handleStepHover : undefined}
-                onStepLeave={onResetBestLinePreview}
+                onStepPreview={handleLineStepPreview}
+                onExitPreview={handleLineExitPreview}
+                onPreviewModeChange={onPreviewModeChange}
               />
             )}
 

@@ -130,9 +130,12 @@ export default function Analysis() {
   const [fromCache, setFromCache] = useState(false)
   // Temporary board preview when hovering best-line steps in CoachPanel
   const [bestLinePreview, setBestLinePreview] = useState(null) // { fen, from, to }
+  // Right-panel tab: 'moves' | 'coach'
+  const [rightTab, setRightTab] = useState('moves')
 
   const abortRef = useRef(null)
   const moveTableRef = useRef(null)
+  const previewActiveRef = useRef(false) // true while BestLineViewer is in preview mode
 
   // On mount, try to load a cached analysis for this game's PGN
   useEffect(() => {
@@ -379,20 +382,32 @@ export default function Analysis() {
   useEffect(() => () => abortRef.current?.abort(), [])
 
   const handleMoveClick = useCallback((index) => {
-    setTrackLatest(false)  // user took manual control
+    setTrackLatest(false)
+    setBestLinePreview(null)
+    previewActiveRef.current = false
     setCurrentIndex(index)
-  }, [])
+    setRightTab(tab => Object.keys(moveCoaching).length > 0 ? 'coach' : tab)
+  }, [moveCoaching])
 
   const handleKeyDown = useCallback((e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return
+    // Don't interfere while BestLineViewer has taken over arrow keys for step navigation
+    if (previewActiveRef.current) return
     if (e.key === 'ArrowLeft') {
       setTrackLatest(false)
+      setBestLinePreview(null)
       setCurrentIndex(i => Math.max(-1, i - 1))
     } else if (e.key === 'ArrowRight') {
       setTrackLatest(false)
+      setBestLinePreview(null)
       setCurrentIndex(i => Math.min(maxNavigableIndex, i + 1))
     }
   }, [maxNavigableIndex])
+
+  // Auto-switch to coach tab the first time coaching data arrives
+  useEffect(() => {
+    if (Object.keys(moveCoaching).length > 0) setRightTab('coach')
+  }, [moveCoaching])
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown)
@@ -440,7 +455,7 @@ export default function Analysis() {
   const progressPercent = totalMoves > 0 ? Math.round((analyzedCount / totalMoves) * 100) : 0
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
+    <div className="h-screen bg-gray-950 text-gray-100 flex flex-col overflow-hidden">
       {/* Header */}
       <header className="border-b border-gray-800 bg-gray-900">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-3">
@@ -540,15 +555,15 @@ export default function Analysis() {
 
       {/* Error */}
       {analyzeError && (
-        <div className="max-w-7xl mx-auto px-6 pt-4">
+        <div className="flex-shrink-0 px-6 pt-2 max-w-7xl w-full mx-auto">
           <div className="p-3 bg-red-900/30 border border-red-700 rounded-xl text-red-400 text-sm">{analyzeError}</div>
         </div>
       )}
 
-      <main className="max-w-7xl mx-auto px-6 py-6">
-        <div className="flex gap-6">
-          {/* Left: Board column */}
-          <div className="flex flex-col gap-2 flex-shrink-0">
+      <main className="flex-1 overflow-hidden min-h-0">
+        <div className="h-full max-w-7xl mx-auto px-6 py-4 flex gap-6">
+          {/* Left: Board column — fixed width, scrollable only if viewport is tiny */}
+          <div className="flex flex-col gap-2 flex-shrink-0 overflow-y-auto">
             {/* Opponent label */}
             <div className="flex items-center gap-2 px-1 ml-7">
               <div className={`w-4 h-4 rounded-sm flex-shrink-0 ${playerColor === 'white' ? 'bg-gray-700 border border-gray-500' : 'bg-gray-200'}`} />
@@ -567,12 +582,12 @@ export default function Analysis() {
                   </div>
                 )}
                 <Chessboard
-                  key={currentIndex}
                   options={{
                     id: `analysis-board-${playerColor}`,
                     position: boardPosition,
                     boardOrientation: playerColor,
                     allowDragging: false,
+                    animationDuration: bestLinePreview ? 0 : 200,
                     boardStyle: { borderRadius: '0' },
                     darkSquareStyle: { backgroundColor: '#4a7c59' },
                     lightSquareStyle: { backgroundColor: '#f0d9b5' },
@@ -643,10 +658,106 @@ export default function Analysis() {
                 ← Use arrow keys or click moves to navigate
               </div>
             )}
+          </div>
 
-            {/* AI Coach Panel — left column, below the board controls */}
-            {(streamedMoves.length > 0 || Object.keys(moveCoaching).length > 0) && (
-              <div className="w-[548px]">
+          {/* Right panel — tabbed, fills remaining width, scrolls independently */}
+          <div className="flex-1 min-w-0 flex flex-col overflow-hidden min-h-0">
+
+            {/* Tab bar — only shown after analysis */}
+            {streamedMoves.length > 0 && (
+              <div className="flex-shrink-0 flex items-center gap-1 border-b border-gray-700 mb-0">
+                <RightTabButton
+                  active={rightTab === 'moves'}
+                  onClick={() => setRightTab('moves')}
+                >
+                  📋 Moves
+                </RightTabButton>
+                <RightTabButton
+                  active={rightTab === 'coach'}
+                  onClick={() => setRightTab('coach')}
+                  badge={Object.keys(moveCoaching).length > 0}
+                >
+                  🎓 Coach
+                </RightTabButton>
+              </div>
+            )}
+
+            {/* Scrollable tab content */}
+            <div className="flex-1 overflow-y-auto min-h-0 py-4">
+
+              {/* ── Moves tab ── */}
+              {(rightTab === 'moves' || streamedMoves.length === 0) && (
+                <div className="flex flex-col gap-4">
+                  {/* Pre-analysis CTA */}
+                  {!analyzing && streamedMoves.length === 0 && (
+                    <div className="bg-gray-900 rounded-xl border border-gray-700 border-dashed p-8 text-center">
+                      <div className="text-4xl mb-3">♟</div>
+                      <h3 className="text-gray-200 font-semibold mb-1">Ready to analyze</h3>
+                      <p className="text-gray-500 text-sm mb-4">
+                        Click <span className="text-blue-400 font-medium">▶ Analyze</span> in the header to start Stockfish analysis.
+                      </p>
+                      <button
+                        onClick={handleAnalyze}
+                        className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-all"
+                      >
+                        ▶ Analyze Game
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Summary stats */}
+                  {(summary || (analyzing && streamedMoves.length > 0)) && (
+                    <SummaryPanel
+                      summary={summary}
+                      streamedMoves={streamedMoves}
+                      playerColor={playerColor}
+                      analyzing={analyzing}
+                      opening={prettifyOpening(gameMeta?.opening || game?.opening)}
+                    />
+                  )}
+
+                  {/* Eval Chart */}
+                  {streamedMoves.length > 0 && (
+                    <EvalChart
+                      moves={streamedMoves}
+                      currentIndex={currentIndex}
+                      onMoveClick={handleMoveClick}
+                    />
+                  )}
+
+                  {/* Move Table */}
+                  {streamedMoves.length > 0 && (
+                    <div ref={moveTableRef}>
+                      <MoveTable
+                        moves={streamedMoves}
+                        currentIndex={currentIndex}
+                        playerColor={playerColor}
+                        onMoveClick={handleMoveClick}
+                      />
+                    </div>
+                  )}
+
+                  {/* Practice Mistakes CTA */}
+                  {!analyzing && streamedMoves.length > 0 && (
+                    <PracticeCTA
+                      moves={streamedMoves}
+                      playerColor={playerColor}
+                      onOpen={() => navigate('/practice', {
+                        state: {
+                          moves: streamedMoves,
+                          pgn: game.pgn,
+                          playerColor,
+                          username,
+                          gameInfo: { white: game.white, black: game.black, result: game.result, time_control: game.time_control, opening: game.opening },
+                        }
+                      })}
+                    />
+                  )}
+                </div>
+              )}
+
+              {/* ── Coach tab ── */}
+              {rightTab === 'coach' && streamedMoves.length > 0 && (
                 <CoachPanel
                   moveCoaching={moveCoaching}
                   currentIndex={currentIndex}
@@ -659,78 +770,11 @@ export default function Analysis() {
                   analyzing={analyzing}
                   onPreviewBestLineStep={setBestLinePreview}
                   onResetBestLinePreview={() => setBestLinePreview(null)}
+                  onPreviewModeChange={(active) => { previewActiveRef.current = active }}
                 />
-              </div>
-            )}
-          </div>
+              )}
 
-          {/* Right panel */}
-          <div className="flex-1 flex flex-col gap-4 min-w-0">
-            {/* Pre-analysis CTA */}
-            {!analyzing && streamedMoves.length === 0 && (
-              <div className="bg-gray-900 rounded-xl border border-gray-700 border-dashed p-8 text-center">
-                <div className="text-4xl mb-3">♟</div>
-                <h3 className="text-gray-200 font-semibold mb-1">Ready to analyze</h3>
-                <p className="text-gray-500 text-sm mb-4">
-                  Click <span className="text-blue-400 font-medium">▶ Analyze</span> in the header to start Stockfish analysis.
-                </p>
-                <button
-                  onClick={handleAnalyze}
-                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-all"
-                >
-                  ▶ Analyze Game
-                </button>
-              </div>
-            )}
-
-            {/* Summary stats */}
-            {(summary || (analyzing && streamedMoves.length > 0)) && (
-              <SummaryPanel
-                summary={summary}
-                streamedMoves={streamedMoves}
-                playerColor={playerColor}
-                analyzing={analyzing}
-                opening={prettifyOpening(gameMeta?.opening || game?.opening)}
-              />
-            )}
-
-            {/* Eval Chart */}
-            {streamedMoves.length > 0 && (
-              <EvalChart
-                moves={streamedMoves}
-                currentIndex={currentIndex}
-                onMoveClick={handleMoveClick}
-              />
-            )}
-
-            {/* Move Table */}
-            {streamedMoves.length > 0 && (
-              <div ref={moveTableRef}>
-                <MoveTable
-                  moves={streamedMoves}
-                  currentIndex={currentIndex}
-                  playerColor={playerColor}
-                  onMoveClick={handleMoveClick}
-                />
-              </div>
-            )}
-
-            {/* Practice Mistakes CTA — shown after analysis completes */}
-            {!analyzing && streamedMoves.length > 0 && (
-              <PracticeCTA
-                moves={streamedMoves}
-                playerColor={playerColor}
-                onOpen={() => navigate('/practice', {
-                  state: {
-                    moves: streamedMoves,
-                    pgn: game.pgn,
-                    playerColor,
-                    username,
-                    gameInfo: { white: game.white, black: game.black, result: game.result, time_control: game.time_control, opening: game.opening },
-                  }
-                })}
-              />
-            )}
+            </div>
           </div>
         </div>
       </main>
@@ -750,6 +794,23 @@ function NavButton({ onClick, label, title }) {
   )
 }
 
+function RightTabButton({ active, onClick, badge, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+        active
+          ? 'border-blue-500 text-blue-400'
+          : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500'
+      }`}
+    >
+      {children}
+      {badge && !active && (
+        <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+      )}
+    </button>
+  )
+}
 function SummaryPanel({ summary, streamedMoves, playerColor, analyzing, opening }) {
   // Live-compute stats from streamed moves if summary not yet received
   const playerMoves = streamedMoves.filter(m => m.color === playerColor)
