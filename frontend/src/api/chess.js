@@ -23,6 +23,9 @@ export const getCachedAnalysis = (pgnHash) =>
 export const deleteCachedAnalysis = (pgnHash) =>
   api.delete(`/analysis/cached/${pgnHash}`)
 
+export const checkPgnCache = (pgns) =>
+  api.post('/analysis/check-cache', { pgns })
+
 /**
  * Compute a simple 24-char hex hash of a PGN string (matches backend sha256 truncated).
  * Uses SubtleCrypto — returns a Promise<string>.

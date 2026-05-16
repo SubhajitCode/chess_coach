@@ -31,7 +31,7 @@ function prettifyOpening(raw) {
   return raw
 }
 
-export default function GameList({ games, username, onSelectGame }) {
+export default function GameList({ games, username, onSelectGame, cacheStatus = {} }) {
   if (!games || games.length === 0) {
     return (
       <div className="text-center py-12 text-gray-500">
@@ -53,6 +53,8 @@ export default function GameList({ games, username, onSelectGame }) {
         const resultBg = RESULT_BG[resultLabel] || 'bg-gray-800 border-gray-700'
         const opening = prettifyOpening(game.opening)
         const date = formatDate(game.end_time)
+        const pgnHash = game.pgn_hash
+        const isCached = pgnHash && cacheStatus[pgnHash]
 
         return (
           <button
@@ -81,9 +83,17 @@ export default function GameList({ games, username, onSelectGame }) {
                 </div>
               </div>
               <div className="flex-shrink-0 text-right flex flex-col items-end gap-1">
-                <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold border ${resultBg} ${resultColor}`}>
-                  {resultLabel}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold border ${resultBg} ${resultColor}`}>
+                    {resultLabel}
+                  </span>
+                  {isCached && (
+                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-900/40 border border-green-700/50">
+                      <span className="text-sm">✓</span>
+                      <span className="text-xs text-green-400 font-medium">Cached</span>
+                    </div>
+                  )}
+                </div>
                 <div className="text-xs text-gray-600">{game.source}</div>
               </div>
             </div>

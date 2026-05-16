@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchGames } from '../api/chess'
+import { fetchGames, computePgnHash, checkPgnCache } from '../api/chess'
 import GameList from '../components/GameList'
 
 const PLATFORMS = [
@@ -52,6 +52,7 @@ export default function Dashboard() {
   const [sortBy, setSortBy] = useState('date_desc')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [cacheStatus, setCacheStatus] = useState({})
 
   const handleFetch = async (e) => {
     e?.preventDefault()
@@ -61,10 +62,35 @@ export default function Dashboard() {
     setLoading(true)
     setError(null)
     setGames([])
+    setCacheStatus({})
     try {
       const res = await fetchGames(platform, username.trim(), year, month)
-      setGames(res.data.games)
-      if (res.data.games.length === 0) setError('No games found for this period.')
+      const fetchedGames = res.data.games
+      setGames(fetchedGames)
+      
+      // Compute PGN hashes and check cache status
+      if (fetchedGames.length > 0) {
+        try {
+          const pgns = fetchedGames.map(g => g.pgn)
+          const hashes = await Promise.all(pgns.map(pgn => computePgnHash(pgn)))
+          
+          // Attach hashes to games
+          const gamesWithHashes = fetchedGames.map((game, idx) => ({
+            ...game,
+            pgn_hash: hashes[idx]
+          }))
+          setGames(gamesWithHashes)
+          
+          // Check cache status
+          const cacheRes = await checkPgnCache(pgns)
+          setCacheStatus(cacheRes.data.cache_status || {})
+        } catch (err) {
+          console.error('Failed to check cache status:', err)
+          // Continue even if cache check fails
+        }
+      }
+      
+      if (fetchedGames.length === 0) setError('No games found for this period.')
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to fetch games. Check your username.')
     } finally {
@@ -196,7 +222,7 @@ export default function Dashboard() {
                 </select>
               </div>
             </div>
-            <GameList games={sortGames(games, sortBy, username)} username={username} onSelectGame={handleSelectGame} />
+            <GameList games={sortGames(games, sortBy, username)} username={username} onSelectGame={handleSelectGame} cacheStatus={cacheStatus} />
           </div>
         )}
 

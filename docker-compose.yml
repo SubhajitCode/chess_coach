@@ -1,3 +1,6 @@
+volumes:
+  chess_analyzer_data:
+
 services:
   backend:
     build:
@@ -9,6 +12,8 @@ services:
       - ./backend/.env
     environment:
       - STOCKFISH_PATH=/usr/games/stockfish
+    volumes:
+      - chess_analyzer_data:/app/data
     restart: unless-stopped
 
   frontend:

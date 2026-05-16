@@ -21,6 +21,9 @@ ENV PATH="$POETRY_HOME/bin:$PATH"
 # Set working directory
 WORKDIR /app
 
+# Create data directory for persistent storage
+RUN mkdir -p /app/data
+
 # Copy dependency files
 COPY pyproject.toml ./
 

@@ -7,7 +7,7 @@ from typing import Any
 
 from services.stockfish_service import _estimate_elo, MAX_CP_LOSS_FOR_STATS
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "chess_analyzer.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "chess_analyzer.db")
 ANALYSIS_CACHE_VERSION = 2
 
 
