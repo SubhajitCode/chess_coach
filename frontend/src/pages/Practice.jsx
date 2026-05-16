@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Chessboard } from 'react-chessboard'
 import { Chess } from 'chess.js'
@@ -27,6 +27,22 @@ function buildFensBefore(moves) {
   return fens
 }
 
+function buildFensAfter(moves) {
+  const ch = new Chess()
+  const fens = []
+  for (const m of moves) {
+    const uci = m.move_uci
+    if (!uci || uci.length < 4) break
+    try {
+      ch.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || undefined })
+      fens.push(ch.fen())
+    } catch {
+      break
+    }
+  }
+  return fens
+}
+
 /** Convert UCI to readable English, e.g. e2e4 → "e2 → e4" */
 function uciToReadable(uci) {
   if (!uci || uci.length < 4) return uci
@@ -37,7 +53,7 @@ export default function Practice() {
   const { state } = useLocation()
   const navigate = useNavigate()
 
-  const moves    = state?.moves       || []
+  const moves = useMemo(() => state?.moves ?? [], [state])
   const playerColor = state?.playerColor || 'white'
   const gameInfo = state?.gameInfo    || {}
 
@@ -60,8 +76,10 @@ export default function Practice() {
   const [attemptedUci, setAttemptedUci] = useState(null)
   const [results, setResults]         = useState([]) // per puzzle: 'correct' | 'wrong' | 'skipped'
   const [shake, setShake]             = useState(false)
+  const [reviewOffset, setReviewOffset] = useState(0)
 
   const fensBefore = useMemo(() => buildFensBefore(moves), [moves])
+  const fensAfter = useMemo(() => buildFensAfter(moves), [moves])
 
   const allMistakes = useMemo(() =>
     moves
@@ -78,13 +96,30 @@ export default function Practice() {
 
   const resetPuzzleState = useCallback(() => {
     setStep(0); setPhase('playing'); setAttempts(0); setHintsUsed(0)
-    setSolvedCount(0); setStreak(0); setDone(false); setAttemptedUci(null); setResults([])
+    setSolvedCount(0); setStreak(0); setDone(false); setAttemptedUci(null); setResults([]); setReviewOffset(0)
   }, [])
 
-  useEffect(() => { resetPuzzleState() }, [filter]) // eslint-disable-line react-hooks/exhaustive-deps
+  const handleFilterChange = useCallback((nextFilter) => {
+    setFilter(nextFilter)
+    setStep(0)
+    setPhase('playing')
+    setAttempts(0)
+    setHintsUsed(0)
+    setSolvedCount(0)
+    setStreak(0)
+    setDone(false)
+    setAttemptedUci(null)
+    setResults([])
+    setReviewOffset(0)
+  }, [])
 
   const current = filtered[step]
   const showAnswer = phase === 'correct' || phase === 'revealed'
+  const puzzlePositionIndex = current ? current.originalIdx - 1 : -1
+  const reviewIndex = Math.max(-1, Math.min(moves.length - 1, puzzlePositionIndex + reviewOffset))
+  const reviewMove = reviewIndex >= 0 ? moves[reviewIndex] : null
+  const isPuzzlePosition = reviewIndex === puzzlePositionIndex
+  const reviewFen = reviewIndex < 0 ? 'start' : (fensAfter[reviewIndex] || current?.fenBefore || 'start')
 
   const handlePieceDrop = useCallback(({ sourceSquare, targetSquare }) => {
     if (phase !== 'playing' || !current) return false
@@ -130,13 +165,38 @@ export default function Practice() {
       setAttempts(0)
       setHintsUsed(0)
       setAttemptedUci(null)
+      setReviewOffset(0)
     }
   }, [step, filtered.length])
+
+  const handleReviewPrev = useCallback(() => {
+    setReviewOffset(offset => {
+      const nextIndex = Math.max(-1, Math.min(moves.length - 1, puzzlePositionIndex + offset - 1))
+      return nextIndex - puzzlePositionIndex
+    })
+  }, [moves.length, puzzlePositionIndex])
+
+  const handleReviewNext = useCallback(() => {
+    setReviewOffset(offset => {
+      const nextIndex = Math.max(-1, Math.min(moves.length - 1, puzzlePositionIndex + offset + 1))
+      return nextIndex - puzzlePositionIndex
+    })
+  }, [moves.length, puzzlePositionIndex])
 
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e) => {
-      if ((e.key === 'ArrowRight' || e.key === 'Enter') && showAnswer && !done) {
+      if (e.key === 'ArrowLeft') {
+        handleReviewPrev()
+        e.preventDefault()
+        return
+      }
+      if (e.key === 'ArrowRight') {
+        handleReviewNext()
+        e.preventDefault()
+        return
+      }
+      if (e.key === 'Enter' && showAnswer && !done) {
         handleNext(); e.preventDefault()
       }
       if (e.key === 'h' && phase === 'playing' && hintsUsed < 2) handleHint()
@@ -144,7 +204,7 @@ export default function Practice() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [showAnswer, done, phase, hintsUsed, handleNext, handleHint, handleSkip])
+  }, [showAnswer, done, phase, hintsUsed, handleNext, handleHint, handleSkip, handleReviewPrev, handleReviewNext])
 
   // Square highlight styles
   const squareStyles = useMemo(() => {
@@ -158,11 +218,11 @@ export default function Practice() {
     if (hintsUsed >= 2 && current.best_move_uci && phase === 'playing') {
       s[current.best_move_uci.slice(2, 4)] = { backgroundColor: 'rgba(234,179,8,0.35)', borderRadius: '4px' }
     }
-    if (phase === 'correct' && current.best_move_uci) {
+    if (phase === 'correct' && current.best_move_uci && isPuzzlePosition) {
       s[current.best_move_uci.slice(0, 2)] = { backgroundColor: 'rgba(34,197,94,0.6)' }
       s[current.best_move_uci.slice(2, 4)] = { backgroundColor: 'rgba(34,197,94,0.6)' }
     }
-    if (phase === 'revealed') {
+    if (phase === 'revealed' && isPuzzlePosition) {
       if (attemptedUci) {
         s[attemptedUci.slice(0, 2)] = { backgroundColor: 'rgba(239,68,68,0.4)' }
         s[attemptedUci.slice(2, 4)] = { backgroundColor: 'rgba(239,68,68,0.4)' }
@@ -173,13 +233,47 @@ export default function Practice() {
       }
     }
     return s
-  }, [phase, current, attemptedUci, hintsUsed])
+  }, [phase, current, attemptedUci, hintsUsed, isPuzzlePosition])
 
-  // Only show mistake arrow AFTER revealing (no spoilers while playing)
   const arrows = useMemo(() => {
-    if (!showAnswer || !current?.move_uci || current.move_uci.length < 4) return []
-    return [{ startSquare: current.move_uci.slice(0, 2), endSquare: current.move_uci.slice(2, 4), color: '#ef4444' }]
-  }, [showAnswer, current])
+    if (!current) return []
+
+    const items = []
+
+    if (isPuzzlePosition && current.move_uci && current.move_uci.length >= 4) {
+      items.push({
+        startSquare: current.move_uci.slice(0, 2),
+        endSquare: current.move_uci.slice(2, 4),
+        color: '#ef4444',
+      })
+    } else if (reviewMove?.move_uci && reviewMove.move_uci.length >= 4) {
+      items.push({
+        startSquare: reviewMove.move_uci.slice(0, 2),
+        endSquare: reviewMove.move_uci.slice(2, 4),
+        color: reviewIndex === current.originalIdx ? '#ef4444' : 'rgba(148, 163, 184, 0.9)',
+      })
+    }
+
+    if (showAnswer && isPuzzlePosition && current.best_move_uci && current.best_move_uci.length >= 4) {
+      items.push({
+        startSquare: current.best_move_uci.slice(0, 2),
+        endSquare: current.best_move_uci.slice(2, 4),
+        color: '#22c55e',
+      })
+    }
+
+    return items
+  }, [showAnswer, current, isPuzzlePosition, reviewMove, reviewIndex])
+
+  const reviewLabel = useMemo(() => {
+    if (!current) return ''
+    if (reviewIndex < 0) return 'Game start'
+    if (isPuzzlePosition) return 'Before the mistake'
+    if (!reviewMove?.move_uci) return `Move ${reviewMove?.move_number ?? reviewIndex + 1}`
+    const sideLabel = reviewMove.color === playerColor ? 'You played' : 'Opponent played'
+    const mistakeLabel = reviewIndex === current.originalIdx ? ' · Mistake move' : ''
+    return `${sideLabel} ${reviewMove.san || reviewMove.move_summary || uciToReadable(reviewMove.move_uci)}${mistakeLabel}`
+  }, [current, reviewIndex, isPuzzlePosition, reviewMove, playerColor])
 
   const mineCount = allMistakes.filter(m => m.color === playerColor).length
   const oppCount  = allMistakes.filter(m => m.color !== playerColor).length
@@ -284,7 +378,7 @@ export default function Practice() {
               { key: 'mine',     label: `Mine (${mineCount})` },
               { key: 'opponent', label: `Opp (${oppCount})` },
             ].map(({ key, label }) => (
-              <button key={key} onClick={() => setFilter(key)}
+              <button key={key} onClick={() => handleFilterChange(key)}
                 className={`px-2.5 py-1 text-xs rounded-md transition-all font-medium ${
                   filter === key ? 'bg-gray-600 text-white' : 'text-gray-500 hover:text-gray-300'
                 }`}
@@ -328,10 +422,10 @@ export default function Practice() {
                 <Chessboard
                   options={{
                     id: 'practice-board',
-                    position: (current.fenBefore || '').split(' ')[0] || 'start',
+                    position: reviewFen.split(' ')[0] || 'start',
                     boardOrientation: current.color,
                     boardWidth: BOARD_SIZE,
-                    allowDragging: phase === 'playing',
+                    allowDragging: phase === 'playing' && isPuzzlePosition,
                     boardStyle: { borderRadius: '0' },
                     darkSquareStyle:  { backgroundColor: '#4a7c59' },
                     lightSquareStyle: { backgroundColor: '#f0d9b5' },
@@ -343,11 +437,38 @@ export default function Practice() {
               </div>
 
               {/* Move number label */}
-              <div className="flex w-full justify-between items-center px-1">
+              <div className="flex w-full justify-between items-center px-1 gap-3">
                 <span className="text-xs text-gray-600 font-mono">Move {current.move_number}</span>
-                <span className="text-xs text-gray-700">
-                  {isMyMistake ? '● Your position' : '● Opponent position'}
-                </span>
+                <span className="text-[11px] text-gray-500 truncate text-right">{reviewLabel}</span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 w-full">
+                <button
+                  onClick={handleReviewPrev}
+                  disabled={reviewIndex <= -1}
+                  className="py-2 text-xs font-medium text-gray-300 border border-gray-700 rounded-lg hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  ← Prev move
+                </button>
+                <button
+                  onClick={() => setReviewOffset(0)}
+                  disabled={isPuzzlePosition}
+                  className="py-2 text-xs font-medium text-gray-200 border border-gray-600 rounded-lg hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  Puzzle position
+                </button>
+                <button
+                  onClick={handleReviewNext}
+                  disabled={reviewIndex >= moves.length - 1}
+                  className="py-2 text-xs font-medium text-gray-300 border border-gray-700 rounded-lg hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next move →
+                </button>
+              </div>
+
+              <div className="flex w-full justify-between items-center px-1 text-[11px] text-gray-600">
+                <span>{isMyMistake ? '● Your mistake puzzle' : '● Opponent mistake puzzle'}</span>
+                <span>{isPuzzlePosition ? 'Drag to solve' : 'Review only'}</span>
               </div>
             </div>
 
@@ -379,6 +500,9 @@ export default function Practice() {
                       ? 'Not quite — try again!'
                       : 'Last chance — find the best move!'}
                   </p>
+                  <p className="text-sm text-gray-400 leading-relaxed">
+                    The red arrow shows the move that was actually played. Use the board navigation to step backward or forward and see how the position changed.
+                  </p>
                   {/* Attempt pips */}
                   <div className="flex gap-1.5">
                     {Array.from({ length: MAX_ATTEMPTS }).map((_, i) => (
@@ -387,7 +511,9 @@ export default function Practice() {
                       }`} />
                     ))}
                   </div>
-                  <p className="text-xs text-gray-600">Drag a piece on the board to make your move.</p>
+                  <p className="text-xs text-gray-600">
+                    {isPuzzlePosition ? 'Drag a piece on the board to make your move.' : 'Return to Puzzle position to try your move.'}
+                  </p>
                 </div>
               )}
 
@@ -429,7 +555,7 @@ export default function Practice() {
                       <span className="font-mono font-bold text-emerald-400">{current.best_move_san}</span>
                       {' '}<span className="text-gray-600 text-xs">({uciToReadable(current.best_move_uci)})</span>
                     </p>
-                    <p className="text-xs text-gray-500">Green squares show the best move. Red arrow shows what was actually played.</p>
+                    <p className="text-xs text-gray-500">Green arrow shows the best move. Red arrow shows what was actually played.</p>
                     {current.move_summary && (
                       <p className="text-xs text-gray-600 italic">
                         What happened: {current.move_summary}
@@ -471,7 +597,7 @@ export default function Practice() {
 
               {/* Keyboard hint */}
               <p className="text-[11px] text-gray-700 text-center">
-                {showAnswer ? 'Press → or Enter for next' : 'H = hint · S = skip'}
+                {showAnswer ? '←/→ review moves · Enter for next puzzle' : '←/→ review moves · H = hint · S = skip'}
               </p>
             </div>
           </div>
