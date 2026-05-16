@@ -36,6 +36,11 @@ export async function computePgnHash(pgn) {
   return hex.slice(0, 24)
 }
 
+export const analyzePosition = (fen, moveUci = null, depth = 12, pvLength = 5) =>
+  api.post('/analyze/position', { fen, move_uci: moveUci, depth, pv_length: pvLength })
+
+export const getDeviationCoaching = (payload) =>
+  api.post('/coach/deviation', payload)
 
 
 /**

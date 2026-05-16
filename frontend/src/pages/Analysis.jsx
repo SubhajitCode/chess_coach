@@ -2,11 +2,12 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Chessboard } from 'react-chessboard'
 import { Chess } from 'chess.js'
-import { analyzeGameStream, getPerMoveCoaching, getCachedPerMoveCoaching, getCachedAnalysis, computePgnHash } from '../api/chess'
+import { analyzeGameStream, getPerMoveCoaching, getCachedPerMoveCoaching, getCachedAnalysis, computePgnHash, analyzePosition } from '../api/chess'
 import MoveTable from '../components/MoveTable'
 import EvalBar from '../components/EvalBar'
 import EvalChart from '../components/EvalChart'
 import CoachPanel from '../components/CoachPanel'
+import DeviationPanel from '../components/DeviationPanel'
 
 const CLASSIFICATION_BADGE = {
   best: { label: 'Best', color: 'bg-emerald-600' },
@@ -135,8 +136,15 @@ export default function Analysis() {
   const [fromCache, setFromCache] = useState(false)
   // Temporary board preview when hovering best-line steps in CoachPanel
   const [bestLinePreview, setBestLinePreview] = useState(null) // { fen, from, to }
-  // Right-panel tab: 'moves' | 'coach'
+  // Right-panel tab: 'moves' | 'coach' | 'explore'
   const [rightTab, setRightTab] = useState('moves')
+
+  // ── Deviation explorer state ──
+  const [exploreMode, setExploreMode] = useState(false)
+  // Each entry: { fen, moveUci, moveSan, moveSummary, color, evalBefore, evalAfter, cpLoss, classification,
+  //               bestMoveUci, bestMoveSan, bestLineSan, bestLineUci, deviationBestLineSan, deviationBestLineUci, fenAfter }
+  const [exploreStack, setExploreStack] = useState([])
+  const [exploreAnalyzing, setExploreAnalyzing] = useState(false)
 
   const abortRef = useRef(null)
   const moveTableRef = useRef(null)
@@ -447,6 +455,98 @@ export default function Analysis() {
     }
   }
 
+  // ── Deviation explorer handlers ──
+
+  // The FEN the board is at when explore mode starts (or after last deviation)
+  const exploreBoardFen = useMemo(() => {
+    if (!exploreMode) return null
+    if (exploreStack.length === 0) return currentFen
+    return exploreStack[exploreStack.length - 1].fenAfter ?? currentFen
+  }, [exploreMode, exploreStack, currentFen])
+
+  const handleEnterExplore = useCallback(() => {
+    setBestLinePreview(null)
+    previewActiveRef.current = false
+    setExploreStack([])
+    setExploreMode(true)
+    setRightTab('explore')
+  }, [])
+
+  const handleExitExplore = useCallback(() => {
+    setExploreMode(false)
+    setExploreStack([])
+    setBestLinePreview(null)
+    previewActiveRef.current = false
+    setRightTab(Object.keys(moveCoaching).length > 0 ? 'coach' : 'moves')
+  }, [moveCoaching])
+
+  const handleExploreUndo = useCallback(() => {
+    setBestLinePreview(null)
+    previewActiveRef.current = false
+    setExploreStack(prev => prev.slice(0, -1))
+  }, [])
+
+  const handleExploreReset = useCallback(() => {
+    setBestLinePreview(null)
+    previewActiveRef.current = false
+    setExploreStack([])
+  }, [])
+
+  // v5 API: onPieceDrop receives { piece, sourceSquare, targetSquare }
+  const handleExplorePieceDrop = useCallback(async ({ piece, sourceSquare, targetSquare }) => {
+    // piece.pieceType = e.g. "bN" (black knight), "wP" (white pawn)
+    const pieceCode = piece?.pieceType || ''
+    const isPawn = pieceCode[1]?.toUpperCase() === 'P'
+    const isPromotion = isPawn && (targetSquare[1] === '8' || targetSquare[1] === '1')
+    const moveUci = `${sourceSquare}${targetSquare}${isPromotion ? 'q' : ''}`
+
+    // Validate with chess.js
+    const fenToPlayOn = exploreStack.length === 0 ? currentFen : (exploreStack[exploreStack.length - 1].fenAfter ?? currentFen)
+    const ch = new Chess(fenToPlayOn)
+    const result = ch.move({ from: sourceSquare, to: targetSquare, promotion: isPromotion ? promotionPiece : undefined })
+    if (!result) return false  // illegal move — reject drop
+
+    // Kick off Stockfish analysis
+    setExploreAnalyzing(true)
+    try {
+      const res = await analyzePosition(fenToPlayOn, moveUci, 12, 5)
+      const d = res.data
+      setExploreStack(prev => [...prev, {
+        fen: fenToPlayOn,
+        moveUci,
+        moveSan: d.move_san || result.san,
+        moveSummary: d.move_summary || null,
+        color: d.color || (ch.turn() === 'w' ? 'black' : 'white'), // color who played = opposite of current turn
+        evalBefore: d.eval_before,
+        evalAfter: d.eval_after,
+        cpLoss: d.cp_loss,
+        classification: d.classification,
+        bestMoveUci: d.best_move_uci,
+        bestMoveSan: d.best_move_san,
+        bestLineSan: d.best_line_san || [],
+        bestLineUci: d.best_line_uci || [],
+        deviationBestLineSan: d.deviation_best_line_san || [],
+        deviationBestLineUci: d.deviation_best_line_uci || [],
+        fenAfter: d.fen_after || ch.fen(),
+      }])
+    } catch {
+      // On error, still accept the move on the board (show position without analysis)
+      setExploreStack(prev => [...prev, {
+        fen: fenToPlayOn,
+        moveUci,
+        moveSan: result.san,
+        moveSummary: null,
+        color: ch.turn() === 'w' ? 'black' : 'white',
+        fenAfter: ch.fen(),
+        bestLineSan: [], bestLineUci: [],
+        deviationBestLineSan: [], deviationBestLineUci: [],
+      }])
+    } finally {
+      setExploreAnalyzing(false)
+    }
+    return true  // accept the drop
+  }, [currentFen, exploreStack, playerColor])
+
   if (!game) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center text-gray-400">
@@ -458,6 +558,7 @@ export default function Analysis() {
 
   const opponent = playerColor === 'white' ? game.black : game.white
   const progressPercent = totalMoves > 0 ? Math.round((analyzedCount / totalMoves) * 100) : 0
+
 
   return (
     <div className="h-screen bg-gray-950 text-gray-100 flex flex-col overflow-hidden">
@@ -581,23 +682,31 @@ export default function Analysis() {
 
               {/* Board */}
               <div className="w-[520px] rounded-xl overflow-hidden border border-gray-700 shadow-2xl relative">
-                {bestLinePreview && (
+                {bestLinePreview && !exploreMode && (
                   <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-3 py-1 bg-emerald-900/90 border border-emerald-600 rounded-full text-[11px] text-emerald-300 font-medium pointer-events-none">
                     Previewing best line
+                  </div>
+                )}
+                {exploreMode && (
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-3 py-1 bg-purple-900/90 border border-purple-600 rounded-full text-[11px] text-purple-300 font-medium pointer-events-none">
+                    {exploreStack.length === 0 ? '🔍 Explore — drag a piece' : `🔍 Exploring (+${exploreStack.length})`}
                   </div>
                 )}
                 <Chessboard
                   options={{
                     id: `analysis-board-${playerColor}`,
-                    position: boardPosition,
+                    position: exploreMode
+                      ? (bestLinePreview?.fen?.split(' ')[0] ?? (exploreBoardFen?.split(' ')[0] ?? boardPosition))
+                      : boardPosition,
                     boardOrientation: playerColor,
-                    allowDragging: false,
+                    allowDragging: exploreMode && !bestLinePreview,
+                    onPieceDrop: exploreMode ? handleExplorePieceDrop : undefined,
                     animationDuration: bestLinePreview ? 0 : 200,
                     boardStyle: { borderRadius: '0' },
-                    darkSquareStyle: { backgroundColor: '#4a7c59' },
-                    lightSquareStyle: { backgroundColor: '#f0d9b5' },
-                    squareStyles: bestLinePreview ? {} : highlightSquares,
-                    arrows: analysisArrows,
+                    darkSquareStyle: { backgroundColor: exploreMode ? '#3d6b4f' : '#4a7c59' },
+                    lightSquareStyle: { backgroundColor: exploreMode ? '#d4c5a0' : '#f0d9b5' },
+                    squareStyles: bestLinePreview ? {} : (exploreMode ? {} : highlightSquares),
+                    arrows: exploreMode ? [] : analysisArrows,
                   }}
                 />
               </div>
@@ -622,6 +731,19 @@ export default function Analysis() {
                 <NavButton onClick={() => { setTrackLatest(false); setBestLinePreview(null); setCurrentIndex(i => Math.min(maxNavigableIndex, i + 1)) }} label="⟩" title="Next (→)" />
                 <NavButton onClick={() => { setTrackLatest(false); setBestLinePreview(null); setCurrentIndex(maxNavigableIndex) }} label="⟩⟩" title="End" />
               </div>
+
+            {/* Explore Mode toggle button */}
+            {!analyzing && streamedMoves.length > 0 && (
+              <button
+                onClick={exploreMode ? handleExitExplore : handleEnterExplore}
+                className={`text-xs py-1.5 px-3 rounded-lg border transition-colors text-center ml-7
+                  ${exploreMode
+                    ? 'border-purple-500 text-purple-300 bg-purple-900/30 hover:bg-purple-900/50'
+                    : 'border-gray-600 text-gray-400 hover:border-purple-500 hover:text-purple-300'}`}
+              >
+                {exploreMode ? '✕ Exit Explore' : '🔍 Explore this position'}
+              </button>
+            )}
 
             {/* Move classification badge */}
             {currentMove && currentMove.classification && (
@@ -684,6 +806,14 @@ export default function Analysis() {
                 >
                   🎓 Coach
                 </RightTabButton>
+                {exploreMode && (
+                  <RightTabButton
+                    active={rightTab === 'explore'}
+                    onClick={() => setRightTab('explore')}
+                  >
+                    🔍 Explore
+                  </RightTabButton>
+                )}
               </div>
             )}
 
@@ -776,6 +906,23 @@ export default function Analysis() {
                   onPreviewBestLineStep={setBestLinePreview}
                   onResetBestLinePreview={() => setBestLinePreview(null)}
                   onPreviewModeChange={(active) => { previewActiveRef.current = active }}
+                />
+              )}
+
+              {/* ── Explore tab ── */}
+              {rightTab === 'explore' && exploreMode && (
+                <DeviationPanel
+                  exploreStack={exploreStack}
+                  analyzing={exploreAnalyzing}
+                  playerColor={playerColor}
+                  gameMoveNumber={currentMove?.move_number}
+                  username={username}
+                  onPreviewStep={setBestLinePreview}
+                  onExitPreview={() => setBestLinePreview(null)}
+                  onPreviewModeChange={(active) => { previewActiveRef.current = active }}
+                  onUndo={handleExploreUndo}
+                  onReset={handleExploreReset}
+                  onExit={handleExitExplore}
                 />
               )}
 

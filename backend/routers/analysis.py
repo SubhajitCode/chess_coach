@@ -1,32 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from models import AnalyzeRequest
-from services.stockfish_service import analyze_pgn, analyze_pgn_stream
+from models import AnalyzeRequest, PositionAnalyzeRequest
+from services.stockfish_service import analyze_pgn_stream, analyze_position
 from services.db import save_analysis, pgn_hash as compute_pgn_hash
 import asyncio
 import json
 
 router = APIRouter()
-
-
-@router.post("/analyze")
-async def analyze_game(req: AnalyzeRequest):
-    if not req.pgn or not req.pgn.strip():
-        raise HTTPException(status_code=400, detail="PGN is required")
-
-    try:
-        result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            analyze_pgn,
-            req.pgn,
-            req.depth,
-            req.player_color,
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 
 @router.post("/analyze/stream")
@@ -72,3 +52,30 @@ async def analyze_game_stream(req: AnalyzeRequest):
             "Connection": "keep-alive",
         },
     )
+
+
+@router.post("/analyze/position")
+async def analyze_position_route(req: PositionAnalyzeRequest):
+    """Quick analysis of any FEN position, optionally with a specific move to evaluate."""
+    if not req.fen or not req.fen.strip():
+        raise HTTPException(status_code=400, detail="FEN is required")
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            analyze_position,
+            req.fen,
+            req.move_uci,
+            req.depth or 12,
+            req.pv_length or 5,
+        )
+        if result.get("error"):
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Position analysis failed: {str(e)}")
+

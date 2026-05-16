@@ -754,3 +754,129 @@ async def get_per_move_coaching(
         raise ValueError(f"LLM did not return feedback for move indices: {preview}")
 
     return [{"move_index": idx, "feedback": feedback_by_index[idx]} for idx in requested_indices]
+
+
+def _game_phase(move_number: int | None) -> str:
+    if move_number is None:
+        return "middlegame"
+    if move_number <= 12:
+        return "opening"
+    if move_number >= 30:
+        return "endgame"
+    return "middlegame"
+
+
+def _build_deviation_prompt(
+    fen_before: str,
+    move_uci: str,
+    move_san: str | None,
+    move_summary: str | None,
+    player_color: str,
+    eval_before: float | None,
+    eval_after: float | None,
+    cp_loss: float | None,
+    classification: str | None,
+    best_move_san: str | None,
+    best_line_san: list[str],
+    deviation_best_line_san: list[str],
+    game_move_number: int | None,
+    username: str | None,
+) -> str:
+    player_name = username or f"the {player_color} player"
+    phase = _game_phase(game_move_number)
+    sign = -1 if player_color == "black" else 1
+
+    def fmt_eval(cp):
+        if cp is None:
+            return "unknown"
+        if abs(cp) >= 9000:
+            return "mate"
+        return f"{(cp * sign / 100):+.2f}"
+
+    eval_before_str = fmt_eval(eval_before)
+    eval_after_str = fmt_eval(eval_after)
+    cp_loss_str = f"{cp_loss:.0f}" if cp_loss is not None else "unknown"
+    cls_str = classification or "unknown"
+    move_desc = move_summary or move_san or move_uci
+    best_line_str = " ".join(best_line_san[:5]) if best_line_san else "n/a"
+    dev_best_line_str = " ".join(deviation_best_line_san[:5]) if deviation_best_line_san else "n/a"
+
+    return f"""You are an expert chess coach analyzing a deviation (alternative move) made by "{player_name}" who plays as {player_color}.
+
+GAME PHASE: {phase} (around move {game_move_number or '?'})
+
+DEVIATION MOVE:
+- Player played: {move_desc} ({move_san or move_uci})
+- Classification: {cls_str} ({cp_loss_str} centipawn loss)
+- Evaluation before: {eval_before_str} pawns (from {player_color}'s perspective)
+- Evaluation after:  {eval_after_str} pawns (from {player_color}'s perspective)
+- Engine's best move instead: {best_move_san or 'n/a'}
+- Best line from this starting position: {best_line_str}
+- Best continuation FROM the deviation: {dev_best_line_str}
+
+INSTRUCTIONS:
+Write a focused 3–5 sentence coaching response that:
+1. Explains what the deviation move does and whether it is a positive or negative choice in this {phase} context.
+2. If it loses material or evaluation, explain *why* — what does it weaken, open, or miss?
+3. Explain what the engine's suggested best line ({best_line_str}) achieves and why it is stronger.
+4. For the best continuation from the deviation ({dev_best_line_str}), briefly explain what it means for the position — does it recover, compensate, or remain worse?
+
+Use clear, beginner-friendly language. Be encouraging. Avoid hallucinating specific piece locations or captures unless they are stated in the facts above."""
+
+
+async def get_deviation_coaching(
+    fen_before: str,
+    move_uci: str,
+    move_san: str | None = None,
+    move_summary: str | None = None,
+    player_color: str = "white",
+    eval_before: float | None = None,
+    eval_after: float | None = None,
+    cp_loss: float | None = None,
+    classification: str | None = None,
+    best_move_san: str | None = None,
+    best_line_san: list[str] | None = None,
+    deviation_best_line_san: list[str] | None = None,
+    game_move_number: int | None = None,
+    username: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+) -> str:
+    config = _get_llm_config(api_key=api_key, model=model)
+    client = _get_client(config)
+
+    prompt = _build_deviation_prompt(
+        fen_before=fen_before,
+        move_uci=move_uci,
+        move_san=move_san,
+        move_summary=move_summary,
+        player_color=player_color,
+        eval_before=eval_before,
+        eval_after=eval_after,
+        cp_loss=cp_loss,
+        classification=classification,
+        best_move_san=best_move_san,
+        best_line_san=best_line_san or [],
+        deviation_best_line_san=deviation_best_line_san or [],
+        game_move_number=game_move_number,
+        username=username,
+    )
+
+    logger.info(
+        "llm deviation coaching model=%s player=%s move=%s prompt_preview=%s",
+        config.model,
+        player_color,
+        move_uci,
+        _preview_text(prompt),
+    )
+
+    response = await client.chat.completions.create(
+        model=config.model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=512,
+        temperature=0.6,
+    )
+
+    content = response.choices[0].message.content or "No coaching response received."
+    return content
+

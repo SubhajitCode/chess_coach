@@ -218,7 +218,90 @@ def _build_move_record(
     return record
 
 
-def analyze_pgn(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: str = None) -> AnalysisResult:
+def analyze_position(
+    fen: str,
+    move_uci: str = None,
+    depth: int = 12,
+    pv_length: int = 5,
+) -> dict:
+    """Quick analysis of an arbitrary FEN position.
+
+    If *move_uci* is provided, also evaluates the position after that move and
+    returns classification / cp_loss / best-line from the resulting position.
+    """
+    board = chess.Board(fen)
+
+    with chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH) as engine:
+        info_before = engine.analyse(board, chess.engine.Limit(depth=depth))
+        eval_before = score_to_cp(info_before["score"], chess.WHITE)
+
+        best_move_obj = info_before.get("pv", [None])[0]
+        best_line_san, best_line_uci = _pv_preview(
+            board.copy(stack=False), info_before.get("pv"), pv_length
+        )
+
+        result: dict = {
+            "eval_before": eval_before,
+            "best_move_uci": str(best_move_obj) if best_move_obj else None,
+            "best_move_san": board.san(best_move_obj) if best_move_obj else None,
+            "best_line_san": best_line_san,
+            "best_line_uci": best_line_uci,
+            "fen_before": fen,
+        }
+
+        if not (move_uci and len(move_uci) >= 4):
+            return result
+
+        try:
+            move = chess.Move.from_uci(move_uci)
+        except ValueError:
+            result["error"] = "Invalid UCI move format"
+            return result
+
+        if move not in board.legal_moves:
+            result["error"] = "Illegal move in this position"
+            return result
+
+        color = "white" if board.turn == chess.WHITE else "black"
+        move_san = board.san(move)
+        move_summary_text = _move_summary(board, move)
+        board.push(move)
+        fen_after = board.fen()
+
+        info_after = engine.analyse(board, chess.engine.Limit(depth=depth))
+        eval_after = score_to_cp(info_after["score"], chess.WHITE)
+
+        if color == "white":
+            cp_loss = (eval_before or 0) - (eval_after or 0)
+        else:
+            cp_loss = (eval_after or 0) - (eval_before or 0)
+        cp_loss = max(0.0, cp_loss)
+
+        dev_best_move_obj = info_after.get("pv", [None])[0]
+        dev_best_move_san = board.san(dev_best_move_obj) if dev_best_move_obj else None
+        dev_best_line_san, dev_best_line_uci = _pv_preview(
+            board.copy(stack=False), info_after.get("pv"), pv_length
+        )
+
+        result.update({
+            "move_uci": move_uci,
+            "move_san": move_san,
+            "move_summary": move_summary_text,
+            "color": color,
+            "eval_after": eval_after,
+            "fen_after": fen_after,
+            "cp_loss": round(cp_loss, 1),
+            "classification": classify_move(cp_loss),
+            "deviation_best_move_uci": str(dev_best_move_obj) if dev_best_move_obj else None,
+            "deviation_best_move_san": dev_best_move_san,
+            "deviation_best_line_san": dev_best_line_san,
+            "deviation_best_line_uci": dev_best_line_uci,
+        })
+
+        return result
+
+
+
     pgn_io = io.StringIO(pgn_text)
     game = chess.pgn.read_game(pgn_io)
     if game is None:

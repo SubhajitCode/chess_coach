@@ -86,3 +86,27 @@ class AnalysisResult(BaseModel):
     player_color: str
     moves: list[MoveAnalysis]
     summary: GameSummary
+
+
+class PositionAnalyzeRequest(BaseModel):
+    fen: str
+    move_uci: Optional[str] = None   # the deviation move to evaluate
+    depth: Optional[int] = 12
+    pv_length: Optional[int] = 5
+
+
+class DeviationCoachRequest(BaseModel):
+    fen_before: str
+    move_uci: str
+    move_san: Optional[str] = None
+    move_summary: Optional[str] = None
+    player_color: str
+    eval_before: Optional[float] = None
+    eval_after: Optional[float] = None
+    cp_loss: Optional[float] = None
+    classification: Optional[str] = None
+    best_move_san: Optional[str] = None   # engine's best at the starting position
+    best_line_san: list[str] = Field(default_factory=list)   # PV from starting position
+    deviation_best_line_san: list[str] = Field(default_factory=list)  # PV from deviation pos
+    game_move_number: Optional[int] = None
+    username: Optional[str] = None
