@@ -18,13 +18,18 @@ const CLASSIFICATION_BADGE = {
 }
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+// Calibration based on empirical ACPL data from large game databases.
+// Chess.com ratings are used as reference (tend to run ~200–300 pts above FIDE).
+// Source: Lichess accuracy research + community ACPL/rating studies.
 const ELO_CALIBRATION_POINTS = [
-  [0, 2500],
-  [10, 2200],
-  [30, 1800],
-  [60, 1400],
-  [120, 800],
-  [200, 200],
+  [0,   2800],   // engine-perfect play
+  [5,   2400],   // GM level
+  [15,  1900],   // Expert / near-master
+  [30,  1400],   // Strong club player
+  [50,  1100],   // Intermediate
+  [80,   800],   // Casual
+  [120,  600],   // Beginner
+  [200,  300],   // Very beginner
 ]
 
 function estimateElo(avgCpLoss) {
