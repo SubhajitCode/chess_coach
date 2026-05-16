@@ -1,21 +1,14 @@
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Chessboard } from 'react-chessboard'
 import { Chess } from 'chess.js'
 
-const BOARD_WIDTH = 400
+const BOARD_SIZE = 500
+const MAX_ATTEMPTS = 3
 
-const CLS_COLOR = {
-  blunder: 'text-red-400',
-  mistake: 'text-orange-400',
-}
-const CLS_ICON = {
-  blunder: '??',
-  mistake: '?',
-}
-const CLS_BG = {
-  blunder: 'bg-red-950/60 border-red-800',
-  mistake: 'bg-orange-950/60 border-orange-800',
+const CLS_META = {
+  blunder: { icon: '??', label: 'Blunder', color: 'text-red-400', bg: 'bg-red-950/50 border-red-800/60', dot: 'bg-red-500' },
+  mistake: { icon: '?',  label: 'Mistake', color: 'text-orange-400', bg: 'bg-orange-950/50 border-orange-800/60', dot: 'bg-orange-500' },
 }
 
 /** Replay move_uci list to produce FEN before each move index. */
@@ -28,32 +21,46 @@ function buildFensBefore(moves) {
     if (uci && uci.length >= 4) {
       try {
         ch.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || undefined })
-      } catch {
-        break
-      }
+      } catch { break }
     }
   }
   return fens
+}
+
+/** Convert UCI to readable English, e.g. e2e4 → "e2 → e4" */
+function uciToReadable(uci) {
+  if (!uci || uci.length < 4) return uci
+  return `${uci.slice(0, 2).toUpperCase()} → ${uci.slice(2, 4).toUpperCase()}`
 }
 
 export default function Practice() {
   const { state } = useLocation()
   const navigate = useNavigate()
 
-  const moves = state?.moves || []
-  const pgn = state?.pgn || ''
+  const moves    = state?.moves       || []
   const playerColor = state?.playerColor || 'white'
-  const username = state?.username
-  const gameInfo = state?.gameInfo || {}
+  const gameInfo = state?.gameInfo    || {}
 
-  const [filter, setFilter] = useState('all') // 'all' | 'mine' | 'opponent'
-  const [step, setStep] = useState(0)
-  const [result, setResult] = useState(null) // null | 'correct' | 'incorrect' | 'skipped'
+  // 'all' | 'mine' | 'opponent'
+  const defaultFilter = useMemo(() => {
+    const mine = moves.filter(m => (m.classification === 'blunder' || m.classification === 'mistake') && m.color === playerColor).length
+    return mine > 0 ? 'mine' : 'all'
+  }, [moves, playerColor])
+
+  const [filter, setFilter]           = useState(defaultFilter)
+  const [step, setStep]               = useState(0)
+  // phase: 'playing' | 'correct' | 'revealed'
+  const [phase, setPhase]             = useState('playing')
+  const [attempts, setAttempts]       = useState(0)
+  const [hintsUsed, setHintsUsed]     = useState(0)  // 0 = none, 1 = piece, 2 = square
+  const [streak, setStreak]           = useState(0)
+  const [maxStreak, setMaxStreak]     = useState(0)
   const [solvedCount, setSolvedCount] = useState(0)
-  const [done, setDone] = useState(false)
+  const [done, setDone]               = useState(false)
   const [attemptedUci, setAttemptedUci] = useState(null)
+  const [results, setResults]         = useState([]) // per puzzle: 'correct' | 'wrong' | 'skipped'
+  const [shake, setShake]             = useState(false)
 
-  // Pre-compute FENs once
   const fensBefore = useMemo(() => buildFensBefore(moves), [moves])
 
   const allMistakes = useMemo(() =>
@@ -64,431 +71,487 @@ export default function Practice() {
   )
 
   const filtered = useMemo(() => {
-    if (filter === 'mine') return allMistakes.filter(m => m.color === playerColor)
+    if (filter === 'mine')     return allMistakes.filter(m => m.color === playerColor)
     if (filter === 'opponent') return allMistakes.filter(m => m.color !== playerColor)
     return allMistakes
   }, [allMistakes, filter, playerColor])
 
-  // Reset when filter changes
-  useEffect(() => {
-    setStep(0)
-    setResult(null)
-    setSolvedCount(0)
-    setDone(false)
-    setAttemptedUci(null)
-  }, [filter])
+  const resetPuzzleState = useCallback(() => {
+    setStep(0); setPhase('playing'); setAttempts(0); setHintsUsed(0)
+    setSolvedCount(0); setStreak(0); setDone(false); setAttemptedUci(null); setResults([])
+  }, [])
+
+  useEffect(() => { resetPuzzleState() }, [filter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const current = filtered[step]
+  const showAnswer = phase === 'correct' || phase === 'revealed'
 
   const handlePieceDrop = useCallback(({ sourceSquare, targetSquare }) => {
-    if (result !== null || !current) return false
+    if (phase !== 'playing' || !current) return false
     const uci = sourceSquare + targetSquare
     const bestUci = current.best_move_uci
     const isCorrect = bestUci && (uci === bestUci || uci === bestUci.slice(0, 4))
     setAttemptedUci(uci)
+
     if (isCorrect) {
-      setResult('correct')
+      setPhase('correct')
       setSolvedCount(s => s + 1)
+      setStreak(s => { const ns = s + 1; setMaxStreak(m => Math.max(m, ns)); return ns })
+      setResults(r => [...r, 'correct'])
     } else {
-      setResult('incorrect')
+      const next = attempts + 1
+      setAttempts(next)
+      setShake(true)
+      setTimeout(() => setShake(false), 500)
+      if (next >= MAX_ATTEMPTS) {
+        setPhase('revealed')
+        setStreak(0)
+        setResults(r => [...r, 'wrong'])
+      }
+      // else stay in 'playing' for retry
     }
     return true
-  }, [result, current])
+  }, [phase, current, attempts])
+
+  const handleHint = useCallback(() => setHintsUsed(h => Math.min(h + 1, 2)), [])
+
+  const handleSkip = useCallback(() => {
+    setPhase('revealed')
+    setStreak(0)
+    setResults(r => [...r, 'skipped'])
+  }, [])
 
   const handleNext = useCallback(() => {
     if (step + 1 >= filtered.length) {
       setDone(true)
     } else {
       setStep(s => s + 1)
-      setResult(null)
+      setPhase('playing')
+      setAttempts(0)
+      setHintsUsed(0)
       setAttemptedUci(null)
     }
   }, [step, filtered.length])
 
-  const handleSkip = useCallback(() => {
-    setResult('skipped')
-  }, [])
-
-  const handleRetry = useCallback(() => {
-    setStep(0)
-    setResult(null)
-    setSolvedCount(0)
-    setDone(false)
-    setAttemptedUci(null)
-  }, [])
-
-  const handleBack = useCallback(() => navigate(-1), [navigate])
-
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e) => {
-      if (e.key === 'ArrowRight' && result !== null && !done) handleNext()
+      if ((e.key === 'ArrowRight' || e.key === 'Enter') && showAnswer && !done) {
+        handleNext(); e.preventDefault()
+      }
+      if (e.key === 'h' && phase === 'playing' && hintsUsed < 2) handleHint()
+      if (e.key === 's' && phase === 'playing') handleSkip()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [result, done, handleNext])
+  }, [showAnswer, done, phase, hintsUsed, handleNext, handleHint, handleSkip])
 
-  // Highlight squares on the board
+  // Square highlight styles
   const squareStyles = useMemo(() => {
-    if (!current || result === null) return {}
-    const styles = {}
-    if (result === 'correct') {
-      if (current.best_move_uci) {
-        styles[current.best_move_uci.slice(0, 2)] = { backgroundColor: 'rgba(34,197,94,0.55)' }
-        styles[current.best_move_uci.slice(2, 4)] = { backgroundColor: 'rgba(34,197,94,0.55)' }
+    if (!current) return {}
+    const s = {}
+    // hint 1 — highlight the piece to move
+    if (hintsUsed >= 1 && current.best_move_uci && phase === 'playing') {
+      s[current.best_move_uci.slice(0, 2)] = { backgroundColor: 'rgba(234,179,8,0.55)', borderRadius: '4px' }
+    }
+    // hint 2 — highlight destination
+    if (hintsUsed >= 2 && current.best_move_uci && phase === 'playing') {
+      s[current.best_move_uci.slice(2, 4)] = { backgroundColor: 'rgba(234,179,8,0.35)', borderRadius: '4px' }
+    }
+    if (phase === 'correct' && current.best_move_uci) {
+      s[current.best_move_uci.slice(0, 2)] = { backgroundColor: 'rgba(34,197,94,0.6)' }
+      s[current.best_move_uci.slice(2, 4)] = { backgroundColor: 'rgba(34,197,94,0.6)' }
+    }
+    if (phase === 'revealed') {
+      if (attemptedUci) {
+        s[attemptedUci.slice(0, 2)] = { backgroundColor: 'rgba(239,68,68,0.4)' }
+        s[attemptedUci.slice(2, 4)] = { backgroundColor: 'rgba(239,68,68,0.4)' }
       }
-    } else {
-      if (attemptedUci && result === 'incorrect') {
-        styles[attemptedUci.slice(0, 2)] = { backgroundColor: 'rgba(239,68,68,0.45)' }
-        styles[attemptedUci.slice(2, 4)] = { backgroundColor: 'rgba(239,68,68,0.45)' }
-      }
       if (current.best_move_uci) {
-        styles[current.best_move_uci.slice(0, 2)] = { backgroundColor: 'rgba(34,197,94,0.55)' }
-        styles[current.best_move_uci.slice(2, 4)] = { backgroundColor: 'rgba(34,197,94,0.55)' }
+        s[current.best_move_uci.slice(0, 2)] = { backgroundColor: 'rgba(34,197,94,0.6)' }
+        s[current.best_move_uci.slice(2, 4)] = { backgroundColor: 'rgba(34,197,94,0.6)' }
       }
     }
-    return styles
-  }, [result, current, attemptedUci])
+    return s
+  }, [phase, current, attemptedUci, hintsUsed])
 
-  // Red arrow showing the bad move that was actually played
-  const mistakeArrow = useMemo(() => {
-    if (!current?.move_uci || current.move_uci.length < 4) return []
-    return [{
-      startSquare: current.move_uci.slice(0, 2),
-      endSquare: current.move_uci.slice(2, 4),
-      color: '#ef4444',
-    }]
-  }, [current])
+  // Only show mistake arrow AFTER revealing (no spoilers while playing)
+  const arrows = useMemo(() => {
+    if (!showAnswer || !current?.move_uci || current.move_uci.length < 4) return []
+    return [{ startSquare: current.move_uci.slice(0, 2), endSquare: current.move_uci.slice(2, 4), color: '#ef4444' }]
+  }, [showAnswer, current])
 
   const mineCount = allMistakes.filter(m => m.color === playerColor).length
-  const oppCount = allMistakes.filter(m => m.color !== playerColor).length
+  const oppCount  = allMistakes.filter(m => m.color !== playerColor).length
 
   if (!state || moves.length === 0) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center text-gray-400">
         No practice data.{' '}
-        <button onClick={handleBack} className="ml-2 text-blue-400 underline">Go back</button>
+        <button onClick={() => navigate(-1)} className="ml-2 text-blue-400 underline">Go back</button>
       </div>
     )
   }
 
+  if (filtered.length === 0) {
+    return (
+      <EmptyState
+        filter={filter} playerColor={playerColor}
+        mineCount={mineCount} oppCount={oppCount}
+        setFilter={setFilter} onBack={() => navigate(-1)}
+      />
+    )
+  }
+
+  if (done) {
+    return (
+      <DoneSummary
+        solved={solvedCount} total={filtered.length}
+        maxStreak={maxStreak} results={results}
+        onRetry={resetPuzzleState} onBack={() => navigate(-1)}
+      />
+    )
+  }
+
+  const cls = CLS_META[current.classification] || CLS_META.mistake
+  const isMyMistake = current.color === playerColor
+
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
-      {/* ── Header ── */}
-      <header className="border-b border-gray-800 bg-gray-900 flex-shrink-0">
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-4">
-          <button
-            onClick={handleBack}
-            className="text-gray-400 hover:text-white transition-colors text-sm flex items-center gap-1"
-          >
+    <>
+      {/* Shake + board glow keyframes */}
+      <style>{`
+        @keyframes shake {
+          0%,100%{transform:translateX(0)}
+          15%{transform:translateX(-6px)}
+          30%{transform:translateX(6px)}
+          45%{transform:translateX(-5px)}
+          60%{transform:translateX(5px)}
+          75%{transform:translateX(-3px)}
+          90%{transform:translateX(3px)}
+        }
+        @keyframes correctFlash {
+          0%{box-shadow:0 0 0 0 rgba(34,197,94,0)}
+          40%{box-shadow:0 0 32px 8px rgba(34,197,94,0.5)}
+          100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}
+        }
+        .board-shake { animation: shake 0.5s ease-in-out; }
+        .board-correct { animation: correctFlash 0.8s ease-out; }
+      `}</style>
+
+      <div className="min-h-screen bg-[#0d1117] text-gray-100 flex flex-col select-none">
+
+        {/* ── Top bar ── */}
+        <header className="flex-shrink-0 px-5 py-2.5 flex items-center gap-3 border-b border-gray-800/70 bg-gray-900/60">
+          <button onClick={() => navigate(-1)} className="text-gray-500 hover:text-white text-sm transition-colors">
             ← Back
           </button>
-          <div className="w-px h-5 bg-gray-700" />
-          <span className="text-xl">🎯</span>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-sm font-bold text-white">Practice Mistakes</h1>
-            <p className="text-xs text-gray-400">
-              {gameInfo.white} vs {gameInfo.black}
-            </p>
+          <div className="w-px h-4 bg-gray-700" />
+
+          {/* Game info */}
+          <span className="text-xs text-gray-500 truncate hidden sm:block max-w-[180px]">
+            {gameInfo.white} vs {gameInfo.black}
+          </span>
+
+          {/* Progress dots — centered */}
+          <div className="flex items-center gap-1.5 flex-1 justify-center">
+            {filtered.map((_, i) => {
+              const r = results[i]
+              const isActive = i === step
+              const isPast   = i < step
+              return (
+                <div key={i} className={`rounded-full transition-all duration-300 ${
+                  isActive ? 'w-3 h-3 bg-white ring-2 ring-white/30'
+                  : isPast && r === 'correct'  ? 'w-2 h-2 bg-emerald-500'
+                  : isPast && r === 'wrong'    ? 'w-2 h-2 bg-red-500'
+                  : isPast && r === 'skipped'  ? 'w-2 h-2 bg-gray-500'
+                  : 'w-2 h-2 bg-gray-700'
+                }`} />
+              )
+            })}
           </div>
 
-          {/* Filter tabs */}
-          <div className="flex items-center gap-1 bg-gray-800 rounded-xl p-1 border border-gray-700">
+          {/* Streak */}
+          {streak > 0 && (
+            <div className="flex items-center gap-1 text-orange-400 font-bold text-sm animate-pulse">
+              🔥 {streak}
+            </div>
+          )}
+
+          {/* Filter pills */}
+          <div className="flex items-center gap-0.5 bg-gray-800 rounded-lg p-0.5 border border-gray-700">
             {[
               { key: 'all',      label: `All (${allMistakes.length})` },
               { key: 'mine',     label: `Mine (${mineCount})` },
-              { key: 'opponent', label: `Opponent (${oppCount})` },
+              { key: 'opponent', label: `Opp (${oppCount})` },
             ].map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => setFilter(key)}
-                className={`px-3 py-1.5 text-xs rounded-lg transition-all font-medium ${
-                  filter === key ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
+              <button key={key} onClick={() => setFilter(key)}
+                className={`px-2.5 py-1 text-xs rounded-md transition-all font-medium ${
+                  filter === key ? 'bg-gray-600 text-white' : 'text-gray-500 hover:text-gray-300'
                 }`}
-              >
-                {label}
-              </button>
+              >{label}</button>
             ))}
           </div>
-        </div>
-      </header>
 
-      {/* ── Body ── */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-6">
-        {filtered.length === 0 ? (
-          <EmptyState filter={filter} onBack={handleBack} />
-        ) : done ? (
-          <DoneSummary
-            solved={solvedCount}
-            total={filtered.length}
-            onRetry={handleRetry}
-            onBack={handleBack}
-          />
-        ) : (
-          <div className="flex gap-6 items-start">
-            {/* ── Left column: board + context ── */}
-            <div className="flex flex-col gap-4 flex-shrink-0" style={{ width: BOARD_WIDTH }}>
-              {/* Progress bar */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1 bg-gray-800 rounded-full h-1.5 overflow-hidden">
-                  <div
-                    className="h-full bg-purple-500 rounded-full transition-all duration-500"
-                    style={{ width: `${(step / filtered.length) * 100}%` }}
-                  />
-                </div>
-                <span className="text-xs text-gray-400 font-mono whitespace-nowrap">{step + 1} / {filtered.length}</span>
-                <span className="text-xs text-emerald-400 font-mono">✓ {solvedCount}</span>
+          <span className="text-xs text-gray-600 font-mono">{step + 1}/{filtered.length}</span>
+        </header>
+
+        {/* ── Main layout ── */}
+        <main className="flex-1 flex items-center justify-center p-4">
+          <div className="flex gap-8 items-center w-full" style={{ maxWidth: 860 }}>
+
+            {/* Board column */}
+            <div className="flex flex-col items-center gap-3 flex-shrink-0">
+
+              {/* "to move" indicator */}
+              <div className="flex items-center gap-2 w-full">
+                <div className={`w-4 h-4 rounded-sm border flex-shrink-0 ${
+                  current.color === 'white' ? 'bg-gray-100 border-gray-300' : 'bg-gray-900 border-gray-500'
+                }`} />
+                <span className="text-sm font-medium text-gray-300 capitalize">{current.color} to move</span>
+                {phase === 'playing' && (
+                  <span className={`ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full border ${cls.color} ${cls.bg}`}>
+                    {cls.icon} {cls.label}
+                  </span>
+                )}
               </div>
 
-              {/* Context card */}
-              <div className={`rounded-xl border px-4 py-3 ${CLS_BG[current.classification]}`}>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={`font-bold ${CLS_COLOR[current.classification]}`}>
-                    {CLS_ICON[current.classification]}
-                  </span>
-                  <span className="text-white font-semibold capitalize">{current.classification}</span>
-                  <span className="text-gray-400 text-sm">— move {current.move_number}</span>
-                  <span className="ml-auto text-xs text-gray-400 capitalize px-1.5 py-0.5 bg-gray-800/60 rounded">
-                    {current.color}
-                  </span>
-                </div>
-                <p className="text-gray-300 text-sm">
-                  <span className={`font-mono font-semibold ${CLS_COLOR[current.classification]}`}>
-                    {current.move_san}
-                  </span>
-                  {' '}was played, losing{' '}
-                  <span className="text-red-400 font-semibold">{Math.round(current.cp_loss)} cp</span>.
-                  {result === null && ' Can you find the best move?'}
-                </p>
-              </div>
-
-              {/* Chess board */}
+              {/* Board */}
               <div
-                className="rounded-xl overflow-hidden border border-gray-700 shadow-xl"
-                style={{ width: BOARD_WIDTH, height: BOARD_WIDTH }}
+                className={`rounded-xl overflow-hidden border shadow-2xl transition-all duration-300 ${
+                  shake           ? 'border-red-600 board-shake'
+                  : phase === 'correct'  ? 'border-emerald-500 board-correct'
+                  : phase === 'revealed' ? 'border-gray-600'
+                  : 'border-gray-700'
+                }`}
+                style={{ width: BOARD_SIZE, height: BOARD_SIZE }}
               >
                 <Chessboard
                   options={{
                     id: 'practice-board',
                     position: (current.fenBefore || '').split(' ')[0] || 'start',
                     boardOrientation: current.color,
-                    boardWidth: BOARD_WIDTH,
-                    allowDragging: result === null,
+                    boardWidth: BOARD_SIZE,
+                    allowDragging: phase === 'playing',
                     boardStyle: { borderRadius: '0' },
-                    darkSquareStyle: { backgroundColor: '#4a7c59' },
+                    darkSquareStyle:  { backgroundColor: '#4a7c59' },
                     lightSquareStyle: { backgroundColor: '#f0d9b5' },
                     squareStyles,
-                    arrows: mistakeArrow,
+                    arrows,
                     onPieceDrop: handlePieceDrop,
                   }}
                 />
               </div>
 
-              {/* Feedback */}
-              {result === 'correct' && (
-                <div className="flex items-center gap-3 px-4 py-3 bg-emerald-950/60 border border-emerald-700 rounded-xl">
-                  <span className="text-2xl">✅</span>
-                  <div>
-                    <p className="text-emerald-300 font-semibold text-sm">Correct!</p>
-                    <p className="text-emerald-400 text-xs font-mono">{current.best_move_san} was the best move</p>
+              {/* Move number label */}
+              <div className="flex w-full justify-between items-center px-1">
+                <span className="text-xs text-gray-600 font-mono">Move {current.move_number}</span>
+                <span className="text-xs text-gray-700">
+                  {isMyMistake ? '● Your position' : '● Opponent position'}
+                </span>
+              </div>
+            </div>
+
+            {/* Info panel */}
+            <div className="flex flex-col gap-4" style={{ width: 300 }}>
+
+              {/* Classification + context */}
+              <div className={`px-4 py-3 rounded-xl border ${cls.bg}`}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`text-2xl font-black leading-none ${cls.color}`}>{cls.icon}</span>
+                  <span className={`font-bold text-base ${cls.color}`}>{cls.label}</span>
+                  <span className="ml-auto text-xs text-gray-500 capitalize">
+                    {isMyMistake ? 'Your mistake' : 'Opponent mistake'}
+                  </span>
+                </div>
+                <p className="text-gray-400 text-xs">
+                  Move {current.move_number} · {current.color === 'white' ? 'White' : 'Black'} to play
+                  {current.cp_loss > 0 && <> · <span className="text-red-400">~{Math.round(current.cp_loss)} cp lost</span></>}
+                </p>
+              </div>
+
+              {/* Puzzle prompt / feedback */}
+              {phase === 'playing' && (
+                <div className="space-y-3">
+                  <p className="text-lg font-semibold text-white leading-snug">
+                    {attempts === 0
+                      ? 'What was the best move here?'
+                      : attempts === 1
+                      ? 'Not quite — try again!'
+                      : 'Last chance — find the best move!'}
+                  </p>
+                  {/* Attempt pips */}
+                  <div className="flex gap-1.5">
+                    {Array.from({ length: MAX_ATTEMPTS }).map((_, i) => (
+                      <div key={i} className={`flex-1 h-1.5 rounded-full transition-colors ${
+                        i < attempts ? 'bg-red-500' : 'bg-gray-700'
+                      }`} />
+                    ))}
                   </div>
+                  <p className="text-xs text-gray-600">Drag a piece on the board to make your move.</p>
                 </div>
               )}
-              {result === 'incorrect' && (
-                <div className="flex items-center gap-3 px-4 py-3 bg-red-950/60 border border-red-700 rounded-xl">
-                  <span className="text-2xl">❌</span>
-                  <div>
-                    <p className="text-red-300 font-semibold text-sm">Not quite.</p>
-                    <p className="text-red-400 text-xs">
-                      Best was{' '}
-                      <span className="font-mono font-bold text-emerald-400">{current.best_move_san}</span>
-                      {' '}(green squares)
-                    </p>
+
+              {phase === 'correct' && (
+                <div className="px-4 py-4 bg-emerald-950/50 border border-emerald-700/60 rounded-xl space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">✓</span>
+                    <span className="text-emerald-300 font-bold text-lg">Correct!</span>
+                    {streak > 1 && <span className="text-orange-400 text-sm ml-1">🔥 {streak}</span>}
                   </div>
-                </div>
-              )}
-              {result === 'skipped' && (
-                <div className="flex items-center gap-3 px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl">
-                  <span className="text-2xl">💡</span>
-                  <div>
-                    <p className="text-gray-300 font-semibold text-sm">Solution revealed</p>
-                    <p className="text-gray-400 text-xs">
-                      Best was{' '}
-                      <span className="font-mono font-bold text-emerald-400">{current.best_move_san}</span>
-                      {' '}(green squares)
+                  <div className="space-y-1">
+                    <p className="text-sm text-emerald-400/90">
+                      <span className="font-mono font-semibold text-emerald-300">{current.best_move_san}</span>
+                      {' '}({uciToReadable(current.best_move_uci)}) was the best move.
                     </p>
+                    {current.move_summary && (
+                      <p className="text-xs text-gray-500 italic">
+                        What was played: {current.move_summary}
+                      </p>
+                    )}
+                    {current.cp_loss > 0 && (
+                      <p className="text-xs text-gray-500">
+                        The actual move lost <span className="text-red-400">{Math.round(current.cp_loss)} centipawns</span> compared to best play.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
 
-              {/* Action buttons */}
-              <div className="flex gap-2">
-                {result === null ? (
-                  <button
-                    onClick={handleSkip}
-                    className="flex-1 py-2 text-sm text-gray-400 border border-gray-600 rounded-xl hover:bg-gray-800 transition-colors"
+              {phase === 'revealed' && (
+                <div className="px-4 py-4 bg-gray-800/60 border border-gray-700 rounded-xl space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">💡</span>
+                    <span className="text-gray-200 font-semibold">Solution</span>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm text-gray-300">
+                      Best move:{' '}
+                      <span className="font-mono font-bold text-emerald-400">{current.best_move_san}</span>
+                      {' '}<span className="text-gray-600 text-xs">({uciToReadable(current.best_move_uci)})</span>
+                    </p>
+                    <p className="text-xs text-gray-500">Green squares show the best move. Red arrow shows what was actually played.</p>
+                    {current.move_summary && (
+                      <p className="text-xs text-gray-600 italic">
+                        What happened: {current.move_summary}
+                      </p>
+                    )}
+                    {current.cp_loss > 0 && (
+                      <p className="text-xs text-gray-500">
+                        The played move lost <span className="text-red-400">{Math.round(current.cp_loss)} cp</span>.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Hint / Skip (only while playing) */}
+              {phase === 'playing' && (
+                <div className="flex gap-2">
+                  <button onClick={handleHint} disabled={hintsUsed >= 2}
+                    className="flex-1 py-2 text-xs font-medium text-yellow-400/80 border border-yellow-800/40 bg-yellow-950/20 rounded-lg hover:bg-yellow-950/40 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                   >
-                    💡 Show Solution
+                    {hintsUsed === 0 ? '💡 Hint (piece)' : hintsUsed === 1 ? '💡 Hint (square)' : '💡 No hints left'}
                   </button>
-                ) : (
-                  <button
-                    onClick={handleNext}
-                    className="flex-1 py-2.5 text-sm font-semibold bg-purple-700 hover:bg-purple-600 text-white rounded-xl transition-colors"
+                  <button onClick={handleSkip}
+                    className="flex-1 py-2 text-xs text-gray-500 border border-gray-700 rounded-lg hover:bg-gray-800 transition-colors"
                   >
-                    {step + 1 >= filtered.length ? '🏁 See Results' : 'Next →'}
+                    Skip →
                   </button>
-                )}
-              </div>
-              <p className="text-xs text-gray-600 text-center">
-                {result !== null ? 'Press → or click Next' : 'Drag a piece to make your move'}
+                </div>
+              )}
+
+              {/* Next button */}
+              {showAnswer && (
+                <button onClick={handleNext}
+                  className="w-full py-3 bg-purple-700 hover:bg-purple-600 text-white font-semibold rounded-xl transition-colors text-sm"
+                >
+                  {step + 1 >= filtered.length ? '🏁 See Results' : 'Next Puzzle →'}
+                </button>
+              )}
+
+              {/* Keyboard hint */}
+              <p className="text-[11px] text-gray-700 text-center">
+                {showAnswer ? 'Press → or Enter for next' : 'H = hint · S = skip'}
               </p>
             </div>
-
-            {/* ── Right column: mistake list ── */}
-            <div className="flex-1 min-w-0">
-              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                Positions in this set
-              </h3>
-              <div className="flex flex-col gap-1.5">
-                {filtered.map((item, idx) => (
-                  <MistakeRow
-                    key={item.originalIdx}
-                    item={item}
-                    index={idx}
-                    step={step}
-                    playerColor={playerColor}
-                    pastResult={idx < step ? 'done' : idx === step ? result : null}
-                  />
-                ))}
-              </div>
-
-              {/* How to use hint */}
-              <div className="mt-6 p-4 bg-gray-900 border border-gray-800 rounded-xl text-xs text-gray-500 space-y-1">
-                <p className="font-semibold text-gray-400">How to practice</p>
-                <p>Drag the correct piece to find the best move from each position.</p>
-                <p>Use <kbd className="bg-gray-800 px-1 rounded">→</kbd> to advance after answering.</p>
-                <p>Use <span className="text-blue-400">💡 Show Solution</span> if you're stuck.</p>
-              </div>
-            </div>
           </div>
-        )}
-      </main>
-    </div>
+        </main>
+      </div>
+    </>
   )
 }
 
-// ─── Sub-components ────────────────────────────────────────────────────────────
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
-function MistakeRow({ item, index, step, playerColor, pastResult }) {
-  const isActive = index === step
-  const isPast = index < step
-  const isOwn = item.color === playerColor
-
+function EmptyState({ filter, mineCount, oppCount, setFilter, onBack }) {
+  const other = filter === 'mine' && oppCount > 0 ? 'opponent' : filter === 'opponent' && mineCount > 0 ? 'mine' : null
   return (
-    <div className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-sm transition-all
-      ${isActive
-        ? 'bg-purple-900/30 border-purple-700/60'
-        : isPast
-        ? 'bg-gray-900 border-gray-800 opacity-60'
-        : 'bg-gray-900 border-gray-800'
-      }
-    `}>
-      {/* Status icon */}
-      <span className={`text-xs w-4 flex-shrink-0 ${
-        isActive ? 'text-purple-400' : isPast ? 'text-gray-600' : 'text-gray-700'
-      }`}>
-        {isActive ? '▶' : isPast ? '●' : '○'}
-      </span>
-
-      {/* Move number */}
-      <span className="text-gray-500 text-xs w-6 font-mono flex-shrink-0">{item.move_number}.</span>
-
-      {/* Classification icon */}
-      <span className={`text-xs font-bold w-5 flex-shrink-0 ${CLS_COLOR[item.classification]}`}>
-        {CLS_ICON[item.classification]}
-      </span>
-
-      {/* Move */}
-      <span className={`font-mono font-semibold flex-1 ${isActive ? 'text-white' : 'text-gray-400'}`}>
-        {item.move_san}
-      </span>
-
-      {/* Yours / Theirs badge */}
-      <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0
-        ${isOwn ? 'bg-blue-900/60 text-blue-300' : 'bg-purple-900/60 text-purple-300'}
-      `}>
-        {isOwn ? 'You' : 'Them'}
-      </span>
-
-      {/* cp loss */}
-      <span className="text-xs text-gray-600 font-mono w-14 text-right flex-shrink-0">
-        −{Math.round(item.cp_loss)} cp
-      </span>
-    </div>
-  )
-}
-
-function EmptyState({ filter, onBack }) {
-  const messages = {
-    mine: 'You had no blunders or mistakes — great game!',
-    opponent: 'Your opponent had no blunders or mistakes here.',
-    all: 'No blunders or mistakes found in this game.',
-  }
-  return (
-    <div className="flex flex-col items-center justify-center py-24 text-center">
+    <div className="min-h-screen bg-[#0d1117] flex flex-col items-center justify-center text-center px-6">
       <div className="text-6xl mb-4">🏆</div>
-      <h2 className="text-2xl font-bold text-white mb-2">Nothing to practice!</h2>
-      <p className="text-gray-400 mb-6">{messages[filter]}</p>
-      <button
-        onClick={onBack}
-        className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-semibold transition-colors"
-      >
-        ← Back to Analysis
-      </button>
+      <h2 className="text-2xl font-bold text-white mb-2">Nothing to practice here!</h2>
+      <p className="text-gray-400 mb-6">
+        {filter === 'mine' ? 'You had no blunders or mistakes — great game!'
+         : filter === 'opponent' ? 'Your opponent had no blunders or mistakes.'
+         : 'No blunders or mistakes found in this game.'}
+      </p>
+      <div className="flex gap-3">
+        {other && (
+          <button onClick={() => setFilter(other)}
+            className="px-5 py-2.5 bg-purple-700 hover:bg-purple-600 text-white rounded-xl font-semibold transition-colors text-sm"
+          >
+            Practice {other === 'mine' ? 'Your' : "Opponent's"} Mistakes
+          </button>
+        )}
+        <button onClick={onBack}
+          className="px-5 py-2.5 border border-gray-600 text-gray-300 hover:text-white rounded-xl font-semibold transition-colors text-sm"
+        >
+          ← Back to Analysis
+        </button>
+      </div>
     </div>
   )
 }
 
-function DoneSummary({ solved, total, onRetry, onBack }) {
+function DoneSummary({ solved, total, maxStreak, results, onRetry, onBack }) {
   const pct = total > 0 ? Math.round((solved / total) * 100) : 0
+  const skipped = results.filter(r => r === 'skipped').length
+  const wrong   = results.filter(r => r === 'wrong').length
   const emoji = pct >= 80 ? '🏆' : pct >= 60 ? '🎯' : pct >= 40 ? '👍' : '📚'
   const msg =
     pct >= 80 ? 'Excellent tactical vision!' :
     pct >= 60 ? 'Good work — keep practicing!' :
     pct >= 40 ? 'Solid effort. Review the positions you missed.' :
     'Study these positions carefully with an engine.'
-
   const barColor = pct >= 80 ? 'bg-emerald-500' : pct >= 60 ? 'bg-blue-500' : pct >= 40 ? 'bg-yellow-500' : 'bg-red-500'
 
   return (
-    <div className="flex flex-col items-center justify-center py-20 text-center max-w-md mx-auto">
+    <div className="min-h-screen bg-[#0d1117] flex flex-col items-center justify-center text-center px-6">
       <div className="text-7xl mb-5">{emoji}</div>
       <h2 className="text-3xl font-bold text-white mb-2">Practice Complete</h2>
       <p className="text-gray-400 mb-8">{msg}</p>
 
-      <div className="flex items-center gap-10 mb-8">
-        <Stat value={solved} label="Correct" color="text-emerald-400" />
-        <Stat value={total - solved} label="Missed" color="text-red-400" />
-        <Stat value={`${pct}%`} label="Score" color="text-blue-400" />
+      <div className="flex items-center gap-8 mb-6">
+        <Stat value={solved}   label="Correct"  color="text-emerald-400" />
+        <Stat value={wrong}    label="Missed"   color="text-red-400" />
+        <Stat value={skipped}  label="Skipped"  color="text-gray-400" />
+        <Stat value={`${pct}%`} label="Score"  color="text-blue-400" />
       </div>
+
+      {maxStreak > 1 && (
+        <p className="text-orange-400 text-sm font-semibold mb-4">🔥 Best streak: {maxStreak}</p>
+      )}
 
       <div className="w-64 bg-gray-800 rounded-full h-3 overflow-hidden mb-10">
         <div className={`h-full rounded-full transition-all duration-1000 ${barColor}`} style={{ width: `${pct}%` }} />
       </div>
 
       <div className="flex gap-3">
-        <button
-          onClick={onRetry}
-          className="px-6 py-2.5 border border-gray-600 text-gray-300 hover:text-white hover:border-gray-400 rounded-xl font-semibold transition-colors"
-        >
-          🔄 Try Again
-        </button>
-        <button
-          onClick={onBack}
-          className="px-6 py-2.5 bg-purple-700 hover:bg-purple-600 text-white rounded-xl font-semibold transition-colors"
-        >
-          ← Back to Analysis
-        </button>
+        <button onClick={onRetry}
+          className="px-6 py-2.5 border border-gray-600 text-gray-300 hover:text-white rounded-xl font-semibold transition-colors text-sm"
+        >🔄 Try Again</button>
+        <button onClick={onBack}
+          className="px-6 py-2.5 bg-purple-700 hover:bg-purple-600 text-white rounded-xl font-semibold transition-colors text-sm"
+        >← Back to Analysis</button>
       </div>
     </div>
   )
