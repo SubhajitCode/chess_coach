@@ -11,7 +11,7 @@ DEFAULT_MODEL_BY_PROVIDER = {
     "openrouter": "meta-llama/llama-3.3-8b-instruct:free",
     "google_ai_studio": "gemini-3-flash-preview",
 }
-COACHING_CACHE_VERSION = 3
+COACHING_CACHE_VERSION = 5
 PER_MOVE_CHUNK_SIZE = 12
 PER_MOVE_RETRY_CHUNK_SIZE = 4
 PER_MOVE_CONTEXT_OVERLAP = 2
@@ -264,6 +264,11 @@ def _best_line_preview(move: dict) -> str:
     return " ".join(best_line[:4]) if best_line else "n/a"
 
 
+def _reply_line_preview(move: dict) -> str:
+    reply_line = [san for san in move.get("reply_line_san", []) if san]
+    return " ".join(reply_line[:4]) if reply_line else "n/a"
+
+
 def _build_critical_line(move: dict, player_color: str, index: int) -> str:
     cp_loss = move.get("cp_loss", 0) or 0
     detail = (
@@ -490,21 +495,27 @@ def _build_target_move_fact_blocks(moves: list[dict], player_color: str, target_
         cp_loss = move.get("cp_loss", 0) or 0
         eval_before = move.get("eval_before", "n/a")
         eval_after = move.get("eval_after", "n/a")
-        blocks.append(
-            "\n".join([
-                f"TARGET idx={idx} role={role} color={move.get('color', '?')} move_number={move.get('move_number', '?')}",
-                f"played_move={move.get('move_san', '?')}",
-                f"played_fact={move.get('move_summary') or 'n/a'}",
-                f"classification={move.get('classification', 'good')}",
-                f"cp_loss={cp_loss:.0f}",
-                f"eval_before={eval_before}",
-                f"eval_after={eval_after}",
-                f"best_move={move.get('best_move_san') or 'n/a'}",
-                f"best_move_fact={move.get('best_move_summary') or 'n/a'}",
-                f"best_line={_best_line_preview(move)}",
-                f"fen_before={move.get('fen_before') or 'n/a'}",
+        classification = move.get("classification", "good")
+        lines = [
+            f"TARGET idx={idx} role={role} color={move.get('color', '?')} move_number={move.get('move_number', '?')}",
+            f"played_move={move.get('move_san', '?')}",
+            f"played_fact={move.get('move_summary') or 'n/a'}",
+            f"classification={classification}",
+            f"cp_loss={cp_loss:.0f}",
+            f"eval_before={eval_before}",
+            f"eval_after={eval_after}",
+            f"best_move={move.get('best_move_san') or 'n/a'}",
+            f"best_move_fact={move.get('best_move_summary') or 'n/a'}",
+            f"best_line={_best_line_preview(move)}",
+            f"fen_before={move.get('fen_before') or 'n/a'}",
+        ]
+        if classification in ("inaccuracy", "mistake", "blunder") and move.get("reply_move_san"):
+            lines.extend([
+                f"best_reply_after_played_move={move.get('reply_move_san')}",
+                f"best_reply_fact={move.get('reply_move_summary') or 'n/a'}",
+                f"best_reply_line={_reply_line_preview(move)}",
             ])
-        )
+        blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
 
@@ -515,22 +526,51 @@ def _deterministic_feedback(move: dict, player_color: str) -> str | None:
         return None
 
     role = _move_role(move, player_color)
+    played_move = move.get("move_san", "this move")
+    reply_move = move.get("reply_move_san")
+    reply_line = _reply_line_preview(move)
     best_move = move.get("best_move_san")
-    best_fact = _sentence_case(move.get("best_move_summary"))
     best_line = _best_line_preview(move)
-    if not best_move or not best_fact:
+
+    if reply_move:
+        if role == "player":
+            if move.get("reply_move_is_checkmate"):
+                feedback = f"After {played_move}, {reply_move} ended the game immediately."
+            elif move.get("reply_move_is_capture") and move.get("reply_move_captured_piece"):
+                feedback = f"After {played_move}, {reply_move} won your {move['reply_move_captured_piece']} and left you on the back foot."
+            elif move.get("reply_move_is_check"):
+                feedback = f"After {played_move}, {reply_move} put you in check and handed the initiative to your opponent."
+            else:
+                feedback = f"After {played_move}, {reply_move} put you under immediate pressure."
+        else:
+            feedback = f"This gave you the chance to play {reply_move} and take over the position."
+
+        if best_move:
+            if move.get("best_move_is_checkmate"):
+                feedback += f" Instead, {best_move} would have finished the game on the spot."
+            elif move.get("best_move_is_capture") and move.get("best_move_captured_piece"):
+                feedback += f" Instead, {best_move} would have won material immediately."
+            elif move.get("best_move_is_check"):
+                feedback += f" Instead, {best_move} would have kept the initiative with check."
+            else:
+                feedback += f" Instead, {best_move} kept the position more under control."
+        elif reply_line != "n/a":
+            feedback += f" The critical line starts {reply_line}."
+        return feedback
+
+    if not best_move:
         return None
 
     if move.get("best_move_is_checkmate"):
         if role == "player":
-            return f"You missed {best_move}. {best_fact}. That was a forced tactical finish."
-        return f"This gave you a winning chance: {best_move}. {best_fact}. That was a forced tactical finish."
+            return f"You missed {best_move}, which would have finished the game on the spot."
+        return f"This gave you a winning chance: {best_move} would have finished the game on the spot."
 
     if move.get("best_move_is_capture") and move.get("best_move_captured_piece"):
         if role == "player":
-            feedback = f"You missed {best_move}. {best_fact}."
+            feedback = f"You missed {best_move}, which would have won material immediately."
         else:
-            feedback = f"This gave you a tactical chance: {best_move}. {best_fact}."
+            feedback = f"This gave you a tactical chance: {best_move} would have won material immediately."
         if best_line != "n/a":
             feedback += f" The best line starts {best_line}."
         return feedback
@@ -578,10 +618,12 @@ Rules:
 - Keep each feedback to at most 2 sentences and about 45 words.
 - For the player's strong moves, explain the idea or strength briefly.
 - For the player's weak moves, explain what went wrong and what the better move achieved.
+- When `best_reply_after_played_move` is present for a weak move, use it to explain the punishment or threat the played move allowed before describing the better move.
 - For the opponent's strong moves, explain the threat or idea created against the player.
 - For the opponent's weak moves, explain the chance it gave the player.
 - Use natural coaching language like "You found...", "Your opponent created...", "This gave you a chance...".
-- Treat `played_fact`, `best_move_fact`, and `best_line` as authoritative.
+- Explain the consequence in plain English. Do not simply restate raw move facts like "queen from d2 moves to f4" unless that detail is needed to make the consequence clear.
+- Treat `played_fact`, `best_move_fact`, `best_line`, `best_reply_fact`, and `best_reply_line` as authoritative.
 - Never invent piece identities, captures, or square contents that are not explicitly supported by those facts.
 - If a fact is missing, stay generic instead of guessing.
 - Let the saved coaching profile influence what you emphasize, especially the player's goal and focus area, but only when the move facts support that emphasis.

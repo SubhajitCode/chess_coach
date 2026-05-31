@@ -184,6 +184,9 @@ def _build_move_record(
     best_move: chess.Move | None,
     best_line_san: list[str],
     best_line_uci: list[str],
+    reply_move: chess.Move | None,
+    reply_line_san: list[str],
+    reply_line_uci: list[str],
     move_number: int,
     color: str,
     eval_before_white: float | None,
@@ -208,10 +211,15 @@ def _build_move_record(
         "fen_after": board_after.fen(),
         "best_line_san": best_line_san,
         "best_line_uci": best_line_uci,
+        "reply_move_uci": str(reply_move) if reply_move else None,
+        "reply_move_san": board_after.san(reply_move) if reply_move else None,
+        "reply_line_san": reply_line_san,
+        "reply_line_uci": reply_line_uci,
         "cp_loss": cp_loss,
         "classification": classification,
         **_move_fact_fields(board_before, move, "move"),
         **_move_fact_fields(board_before, best_move, "best_move"),
+        **_move_fact_fields(board_after, reply_move, "reply_move"),
     }
     if record_type is not None:
         record["type"] = record_type
@@ -344,6 +352,10 @@ def analyze_position(
             # Eval AFTER the move
             info_after = engine.analyse(board, chess.engine.Limit(depth=depth))
             eval_after_white = score_to_cp(info_after["score"], chess.WHITE)
+            reply_move = info_after.get("pv", [None])[0]
+            reply_line_san, reply_line_uci = _pv_preview(
+                board.copy(stack=False), info_after.get("pv")
+            )
 
             # Centipawn loss is always from the perspective of the player who just moved
             if color == "white":
@@ -361,6 +373,9 @@ def analyze_position(
                 best_move=best_move,
                 best_line_san=best_line_san,
                 best_line_uci=best_line_uci,
+                reply_move=reply_move,
+                reply_line_san=reply_line_san,
+                reply_line_uci=reply_line_uci,
                 move_number=move_number,
                 color=color,
                 eval_before_white=eval_before_white,
@@ -494,6 +509,10 @@ def analyze_pgn_stream(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: 
 
                 info_after = engine.analyse(board, chess.engine.Limit(depth=depth))
                 eval_after_white = score_to_cp(info_after["score"], chess.WHITE)
+                reply_move = info_after.get("pv", [None])[0]
+                reply_line_san, reply_line_uci = _pv_preview(
+                    board.copy(stack=False), info_after.get("pv")
+                )
 
                 if color == "white":
                     cp_loss = (eval_before_white or 0) - (eval_after_white or 0)
@@ -509,6 +528,9 @@ def analyze_pgn_stream(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: 
                     best_move=best_move,
                     best_line_san=best_line_san,
                     best_line_uci=best_line_uci,
+                    reply_move=reply_move,
+                    reply_line_san=reply_line_san,
+                    reply_line_uci=reply_line_uci,
                     move_number=move_number,
                     color=color,
                     eval_before_white=eval_before_white,

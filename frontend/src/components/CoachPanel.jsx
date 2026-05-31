@@ -44,6 +44,99 @@ function cpLossDescription(loss) {
   return 'Major blunder — large advantage given away'
 }
 
+function previewSanLine(line) {
+  if (!line?.length) return null
+  return line.filter(Boolean).slice(0, 4).join(' ')
+}
+
+function splitFeedback(feedback) {
+  if (!feedback) return { headline: null, detail: null }
+  const normalized = feedback.replace(/\s+/g, ' ').trim()
+  if (!normalized) return { headline: null, detail: null }
+  const sentences = normalized.match(/[^.!?]+[.!?]?/g)?.map((part) => part.trim()).filter(Boolean) ?? [normalized]
+  return {
+    headline: sentences[0] || null,
+    detail: sentences.slice(1).join(' ') || null,
+  }
+}
+
+function scoreFromPlayerPerspective(score, playerColor) {
+  if (score == null) return null
+  return playerColor === 'black' ? -score : score
+}
+
+function buildPositionSwingSummary(move, playerColor) {
+  const before = scoreFromPlayerPerspective(move?.eval_before, playerColor)
+  const after = scoreFromPlayerPerspective(move?.eval_after, playerColor)
+  if (before == null || after == null) return null
+
+  if (before >= 3 && after <= 0.3) return 'You let a winning position slip away.'
+  if (before >= 1 && after < -0.3) return 'You went from better to worse in one move.'
+  if (before >= 0.3 && after < -1) return 'You handed the advantage to your opponent.'
+  if (before > -0.3 && after < -0.3) return 'You turned an equal position into a worse one.'
+  if (before <= -0.3 && after <= before - 1) return 'This made an already difficult position even harder to defend.'
+
+  const cpLoss = move?.cp_loss ?? 0
+  if (cpLoss >= 150) return 'This gave your opponent a big swing in the position.'
+  if (cpLoss >= 80) return 'This gave your opponent the easier game.'
+  return null
+}
+
+function buildFallbackHeadline(move) {
+  const replyMove = move.reply_move_san
+
+  if (move.reply_move_is_checkmate && replyMove) {
+    return `After ${move.move_san}, ${replyMove} ended the game immediately.`
+  }
+  if (move.reply_move_is_capture && move.reply_move_captured_piece && replyMove) {
+    return `After ${move.move_san}, ${replyMove} won your ${move.reply_move_captured_piece}.`
+  }
+  if (move.reply_move_is_check && replyMove) {
+    return `After ${move.move_san}, ${replyMove} put your king in trouble right away.`
+  }
+  if (replyMove) {
+    return `After ${move.move_san}, ${replyMove} gave your opponent the initiative.`
+  }
+  return null
+}
+
+function buildAlternativeSummary(move) {
+  const bestMove = move?.best_move_san
+  if (!bestMove) return null
+
+  if (move.best_move_is_checkmate) {
+    return `Instead, ${bestMove} would have finished the game immediately.`
+  }
+  if (move.best_move_is_capture && move.best_move_captured_piece) {
+    return `Instead, ${bestMove} would have won material right away.`
+  }
+  if (move.best_move_is_check) {
+    return `Instead, ${bestMove} would have kept the initiative with check.`
+  }
+  return `Instead, ${bestMove} kept your position more stable.`
+}
+
+function buildWhyBadSummary(move, feedback, playerColor) {
+  if (!move || !['mistake', 'blunder'].includes(move.classification)) return null
+
+  const replyLine = previewSanLine(move.reply_line_san)
+  const aiSummary = splitFeedback(feedback)
+  const positionSwing = buildPositionSwingSummary(move, playerColor)
+  const headline = aiSummary.headline || buildFallbackHeadline(move)
+
+  if (!headline && !positionSwing) return null
+
+  const detail = aiSummary.detail || positionSwing
+  const detailStartsWithAlternative = /^instead\b/i.test(detail || '')
+
+  return {
+    headline,
+    detail,
+    alternative: detailStartsWithAlternative ? null : buildAlternativeSummary(move),
+    replyLine,
+  }
+}
+
 function prettifyProfileValue(value) {
   if (!value) return null
   return value
@@ -355,6 +448,7 @@ export default function CoachPanel({
   const cls             = currentMove?.classification
   const clsMeta         = cls ? CLASSIFICATION_META[cls] : null
   const hasEngineData   = !!currentMove?.classification
+  const whyBadSummary   = isPlayerMove ? buildWhyBadSummary(currentMove, feedback, playerColor) : null
   const moveOwnerLabel  = isPlayerMove ? 'Your move' : "Opponent's move"
   const moveOwnerClass  = isPlayerMove
     ? 'bg-blue-900/40 text-blue-300 border-blue-700/60'
@@ -485,7 +579,7 @@ export default function CoachPanel({
             {currentMove?.move_summary && (
               <div className="rounded-lg border border-gray-700 bg-gray-950/60 p-3">
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
-                  You played
+                  Played move
                 </div>
                 <div className="text-sm text-gray-200">
                   {currentMove.move_summary.charAt(0).toUpperCase() + currentMove.move_summary.slice(1)}
@@ -527,6 +621,38 @@ export default function CoachPanel({
                 onExitPreview={handleLineExitPreview}
                 onPreviewModeChange={onPreviewModeChange}
               />
+            )}
+
+            {/* Why the move was bad */}
+            {whyBadSummary && (
+              <div className="rounded-lg border border-red-800/60 bg-red-950/20 p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-red-300 mb-2">
+                  Why this was bad
+                </div>
+                {whyBadSummary.headline && (
+                  <p className="text-sm text-red-100 leading-relaxed">
+                    {whyBadSummary.headline}
+                  </p>
+                )}
+                {whyBadSummary.detail && (
+                  <p className="mt-2 text-xs text-red-200/90 leading-relaxed">
+                    {whyBadSummary.detail}
+                  </p>
+                )}
+                {whyBadSummary.alternative && (
+                  <p className="mt-2 text-xs text-emerald-200 leading-relaxed">
+                    {whyBadSummary.alternative}
+                  </p>
+                )}
+                {whyBadSummary.replyLine && (
+                  <div className="mt-2 rounded-md border border-red-800/50 bg-gray-950/40 px-2.5 py-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-red-300/80 mb-1">
+                      How the engine punishes it
+                    </div>
+                    <div className="text-xs text-gray-200">{whyBadSummary.replyLine}</div>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* AI coaching text */}

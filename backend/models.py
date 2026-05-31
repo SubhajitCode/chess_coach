@@ -42,6 +42,10 @@ class MoveAnalysis(BaseModel):
     fen_after: Optional[str] = None
     best_line_san: list[str] = Field(default_factory=list)
     best_line_uci: list[str] = Field(default_factory=list)
+    reply_move_uci: Optional[str] = None
+    reply_move_san: Optional[str] = None
+    reply_line_san: list[str] = Field(default_factory=list)
+    reply_line_uci: list[str] = Field(default_factory=list)
     move_piece: Optional[str] = None
     move_from: Optional[str] = None
     move_to: Optional[str] = None
@@ -58,6 +62,14 @@ class MoveAnalysis(BaseModel):
     best_move_is_check: bool = False
     best_move_is_checkmate: bool = False
     best_move_summary: Optional[str] = None
+    reply_move_piece: Optional[str] = None
+    reply_move_from: Optional[str] = None
+    reply_move_to: Optional[str] = None
+    reply_move_captured_piece: Optional[str] = None
+    reply_move_is_capture: bool = False
+    reply_move_is_check: bool = False
+    reply_move_is_checkmate: bool = False
+    reply_move_summary: Optional[str] = None
     cp_loss: Optional[float]
     classification: str
 
