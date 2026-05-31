@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException
-from typing import List
 from services.db import get_analysis, list_cached, delete_analysis, pgn_hash
 
 router = APIRouter()
@@ -32,9 +31,7 @@ def check_pgn_cache(body: dict):
 @router.get("/analysis/cached/{pgn_hash}")
 def get_cached(pgn_hash: str):
     result = get_analysis(pgn_hash)
-    if result is None:
-        raise HTTPException(status_code=404, detail="No cached analysis found")
-    return result
+    return {"cached": result, "found": result is not None}
 
 
 @router.delete("/analysis/cached/{pgn_hash}")

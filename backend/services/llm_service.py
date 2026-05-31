@@ -11,7 +11,7 @@ DEFAULT_MODEL_BY_PROVIDER = {
     "openrouter": "meta-llama/llama-3.3-8b-instruct:free",
     "google_ai_studio": "gemini-3-flash-preview",
 }
-COACHING_CACHE_VERSION = 2
+COACHING_CACHE_VERSION = 3
 PER_MOVE_CHUNK_SIZE = 12
 PER_MOVE_RETRY_CHUNK_SIZE = 4
 PER_MOVE_CONTEXT_OVERLAP = 2
@@ -19,6 +19,32 @@ PER_MOVE_MAX_TOKENS = 2048
 PER_MOVE_STRICT_MAX_TOKENS = 1024
 
 logger = logging.getLogger(__name__)
+
+TIME_CONTROL_EMPHASIS = {
+    "blitz": "Emphasize fast blunder checks, practical decisions, and simple candidate-move habits that survive time pressure.",
+    "rapid": "Emphasize disciplined candidate-move selection, short calculation, and turning extra time into cleaner practical choices.",
+    "classical": "Emphasize deeper calculation, long-term plans, and avoiding lazy assumptions in critical positions.",
+    "daily": "Emphasize calculation discipline, plan comparison, and using available time to verify forcing lines carefully.",
+    "mixed": "Balance practical pattern recognition with calculation habits that transfer across online games.",
+}
+
+IMPROVEMENT_GOAL_EMPHASIS = {
+    "blunder_reduction": "Prioritize one-move tactical oversights, loose pieces, forcing replies, and moments where a safety check would have saved the position.",
+    "tactical_awareness": "Prioritize checks, captures, threats, and the tactical motifs that appeared just before the evaluation swing.",
+    "opening_understanding": "Prioritize the first uncomfortable decisions after theory and explain the plans and structures the player should remember next time.",
+    "conversion": "Prioritize keeping control when better, choosing practical plans, and avoiding unnecessary complications after gaining an edge.",
+    "defense": "Prioritize resilient resources, damage limitation, and practical defensive choices in worse positions.",
+    "endgames": "Prioritize simplification decisions, king activity, pawn structure, and recurring endgame technique errors.",
+}
+
+FOCUS_AREA_EMPHASIS = {
+    "forcing_moves": "Keep reinforcing a forcing-moves checklist: checks, captures, and direct threats before quieter options.",
+    "calculation": "Reinforce candidate-move discipline and concrete calculation rather than instinctive play.",
+    "time_management": "Point out where a simple pause or faster practical decision would improve time management.",
+    "opening_plans": "Anchor the advice in typical plans, piece placement, and pawn-structure ideas rather than memorized theory.",
+    "conversion": "Highlight how to simplify, reduce counterplay, and convert advantages with lower risk.",
+    "defense": "Highlight how to stay stubborn, reduce tactical damage, and find practical defensive resources.",
+}
 
 
 @dataclass(frozen=True)
@@ -126,6 +152,109 @@ def _sentence_case(text: str | None) -> str | None:
     return text[:1].upper() + text[1:]
 
 
+def _clean_profile_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
+def _normalise_profile(profile: dict | None) -> dict[str, str | None]:
+    profile = profile or {}
+    return {
+        "main_time_control": _clean_profile_value(profile.get("main_time_control")),
+        "improvement_goal": _clean_profile_value(profile.get("improvement_goal")),
+        "focus_area": _clean_profile_value(profile.get("focus_area")),
+    }
+
+
+def _pretty_profile_label(value: str | None) -> str | None:
+    cleaned = _clean_profile_value(value)
+    if not cleaned:
+        return None
+    return cleaned.replace("_", " ").replace("/", " / ").title()
+
+
+def _build_profile_context_block(profile: dict | None, game_time_control: str | None) -> str:
+    context = _normalise_profile(profile)
+    lines: list[str] = []
+
+    main_time_control = context["main_time_control"]
+    improvement_goal = context["improvement_goal"]
+    focus_area = context["focus_area"]
+
+    if main_time_control:
+        time_control_emphasis = TIME_CONTROL_EMPHASIS.get(
+            main_time_control,
+            "Keep the coaching practical for the player's usual games.",
+        )
+        lines.append(
+            f"- Main training time control: {_pretty_profile_label(main_time_control)}. "
+            f"{time_control_emphasis}"
+        )
+    if improvement_goal:
+        goal_emphasis = IMPROVEMENT_GOAL_EMPHASIS.get(
+            improvement_goal,
+            "Bias the coaching toward the player's stated improvement goal.",
+        )
+        lines.append(
+            f"- Current improvement goal: {_pretty_profile_label(improvement_goal)}. "
+            f"{goal_emphasis}"
+        )
+    if focus_area:
+        focus_emphasis = FOCUS_AREA_EMPHASIS.get(
+            focus_area,
+            "Reinforce this focus when the position genuinely supports it.",
+        )
+        lines.append(
+            f"- Current focus area: {_pretty_profile_label(focus_area)}. "
+            f"{focus_emphasis}"
+        )
+    if main_time_control and game_time_control:
+        lines.append(
+            f"- Use the actual game time control ({game_time_control}) for position-specific judgment, "
+            f"but phrase the advice so it still helps the player's usual {_pretty_profile_label(main_time_control).lower()} games."
+        )
+
+    if not lines:
+        return "- No saved coaching profile. Give balanced practical advice for an intermediate online improver."
+
+    lines.append(
+        "- Use the profile to prioritize what matters, but do not force the same theme into every position when the facts point elsewhere."
+    )
+    return "\n".join(lines)
+
+
+def _build_profile_context_brief(profile: dict | None, game_time_control: str | None) -> str:
+    context = _normalise_profile(profile)
+    parts: list[str] = []
+
+    if context["main_time_control"]:
+        parts.append(f"usual_time_control={context['main_time_control']}")
+    if context["improvement_goal"]:
+        parts.append(f"goal={context['improvement_goal']}")
+    if context["focus_area"]:
+        parts.append(f"focus={context['focus_area']}")
+    if game_time_control:
+        parts.append(f"game_time_control={game_time_control}")
+
+    if not parts:
+        return "coaching_profile=balanced practical coaching for an intermediate online improver"
+
+    emphasis_parts = []
+    if context["main_time_control"]:
+        emphasis_parts.append(TIME_CONTROL_EMPHASIS.get(context["main_time_control"], ""))
+    if context["improvement_goal"]:
+        emphasis_parts.append(IMPROVEMENT_GOAL_EMPHASIS.get(context["improvement_goal"], ""))
+    if context["focus_area"]:
+        emphasis_parts.append(FOCUS_AREA_EMPHASIS.get(context["focus_area"], ""))
+
+    emphasis = " ".join(part for part in emphasis_parts if part).strip()
+    if emphasis:
+        return "coaching_profile=" + "; ".join(parts) + f". emphasis={emphasis}"
+    return "coaching_profile=" + "; ".join(parts)
+
+
 def _move_role(move: dict, player_color: str) -> str:
     return "player" if move.get("color") == player_color else "opponent"
 
@@ -154,7 +283,12 @@ def _build_critical_line(move: dict, player_color: str, index: int) -> str:
     return detail
 
 
-def _build_prompt(analysis: dict, player_color: str, username: str = None) -> str:
+def _build_prompt(
+    analysis: dict,
+    player_color: str,
+    username: str = None,
+    profile: dict | None = None,
+) -> str:
     white = analysis.get("white", "White")
     black = analysis.get("black", "Black")
     result = analysis.get("result", "*")
@@ -178,6 +312,7 @@ def _build_prompt(analysis: dict, player_color: str, username: str = None) -> st
     )
     if not critical_text:
         critical_text = "  No critical mistakes found — you played very well!"
+    profile_context = _build_profile_context_block(profile, time_control)
 
     prompt = f"""You are an expert chess coach analyzing a game for player "{player_name}" who played as {player_color}.
 
@@ -197,10 +332,14 @@ PLAYER STATISTICS (for {player_color}):
 CRITICAL MOMENTS (top errors by centipawn loss):
 {critical_text}
 
+PLAYER COACHING PROFILE:
+{profile_context}
+
 Instructions:
 - Treat "Played fact", "Best was (...)", and "PV" as authoritative chess facts.
 - Do not invent piece identities, captures, or square contents that are not explicitly supported by those facts.
 - Prefer concrete, position-specific explanations over generic advice.
+- Tailor the patterns, opening feedback, and actionable tips to the saved coaching profile when it is relevant to the game facts.
 
 Please provide a structured coaching report with the following sections:
 1. **Game Overview** (2-3 sentences summarizing how the game went)
@@ -218,12 +357,13 @@ async def get_coaching(
     analysis: dict,
     player_color: str,
     username: str = None,
+    profile: dict | None = None,
     api_key: str = None,
     model: str = None,
 ) -> str:
     config = _get_llm_config(api_key=api_key, model=model)
     client = _get_client(config)
-    prompt = _build_prompt(analysis, player_color, username)
+    prompt = _build_prompt(analysis, player_color, username, profile)
 
     logger.info(
         "llm coaching request provider=%s model=%s player_color=%s moves=%s prompt_preview=%s",
@@ -251,7 +391,12 @@ async def get_coaching(
     return content
 
 
-def _build_game_brief(analysis: dict, player_color: str, username: str = None) -> str:
+def _build_game_brief(
+    analysis: dict,
+    player_color: str,
+    username: str = None,
+    profile: dict | None = None,
+) -> str:
     white = analysis.get("white", "White")
     black = analysis.get("black", "Black")
     result = analysis.get("result", "*")
@@ -293,6 +438,7 @@ def _build_game_brief(analysis: dict, player_color: str, username: str = None) -
     return "\n".join([
         f"player={player_name} ({player_color}) vs {opponent_name} ({opponent_color})",
         f"result={result} opening={opening} time_control={time_control}",
+        _build_profile_context_brief(profile, time_control),
         (
             "player_summary="
             f"accuracy {summary.get('accuracy', 0)}%, "
@@ -397,6 +543,7 @@ def _build_per_move_chunk_prompt(
     player_color: str,
     target_indices: list[int],
     username: str = None,
+    profile: dict | None = None,
     strict_json: bool = False,
 ) -> str:
     white = analysis.get("white", "White")
@@ -408,7 +555,7 @@ def _build_per_move_chunk_prompt(
     player_name = username or (white if player_color == "white" else black)
     move_window = _build_move_context_lines(moves, player_color, target_indices)
     target_blocks = _build_target_move_fact_blocks(moves, player_color, target_indices)
-    game_brief = _build_game_brief(analysis, player_color, username)
+    game_brief = _build_game_brief(analysis, player_color, username, profile)
     target_list = ", ".join(str(idx) for idx in target_indices)
     strict_block = ""
     if strict_json:
@@ -437,6 +584,7 @@ Rules:
 - Treat `played_fact`, `best_move_fact`, and `best_line` as authoritative.
 - Never invent piece identities, captures, or square contents that are not explicitly supported by those facts.
 - If a fact is missing, stay generic instead of guessing.
+- Let the saved coaching profile influence what you emphasize, especially the player's goal and focus area, but only when the move facts support that emphasis.
 - Do not omit any target move.
 {strict_block}
 
@@ -589,6 +737,7 @@ async def _request_per_move_group(
     player_color: str,
     group: list[int],
     username: str | None,
+    profile: dict | None,
     strict_json: bool,
 ) -> tuple[list[dict], str]:
     prompt = _build_per_move_chunk_prompt(
@@ -596,6 +745,7 @@ async def _request_per_move_group(
         player_color,
         group,
         username,
+        profile,
         strict_json=strict_json,
     )
     logger.info(
@@ -646,6 +796,7 @@ async def get_per_move_coaching(
     analysis: dict,
     player_color: str,
     username: str = None,
+    profile: dict | None = None,
     api_key: str = None,
     model: str = None,
     target_move_indices: list[int] | None = None,
@@ -690,6 +841,7 @@ async def get_per_move_coaching(
                     player_color,
                     group,
                     username,
+                    profile,
                     strict_json,
                 )
             except ValueError as exc:
@@ -781,6 +933,7 @@ def _build_deviation_prompt(
     deviation_best_line_san: list[str],
     game_move_number: int | None,
     username: str | None,
+    profile: dict | None,
 ) -> str:
     player_name = username or f"the {player_color} player"
     phase = _game_phase(game_move_number)
@@ -800,6 +953,7 @@ def _build_deviation_prompt(
     move_desc = move_summary or move_san or move_uci
     best_line_str = " ".join(best_line_san[:5]) if best_line_san else "n/a"
     dev_best_line_str = " ".join(deviation_best_line_san[:5]) if deviation_best_line_san else "n/a"
+    profile_context = _build_profile_context_block(profile, None)
 
     return f"""You are an expert chess coach analyzing a deviation (alternative move) made by "{player_name}" who plays as {player_color}.
 
@@ -814,12 +968,16 @@ DEVIATION MOVE:
 - Best line from this starting position: {best_line_str}
 - Best continuation FROM the deviation: {dev_best_line_str}
 
+PLAYER COACHING PROFILE:
+{profile_context}
+
 INSTRUCTIONS:
 Write a focused 3–5 sentence coaching response that:
 1. Explains what the deviation move does and whether it is a positive or negative choice in this {phase} context.
 2. If it loses material or evaluation, explain *why* — what does it weaken, open, or miss?
 3. Explain what the engine's suggested best line ({best_line_str}) achieves and why it is stronger.
 4. For the best continuation from the deviation ({dev_best_line_str}), briefly explain what it means for the position — does it recover, compensate, or remain worse?
+5. When relevant, tie the explanation to the player's saved goal and focus area without inventing unsupported details.
 
 Use clear, beginner-friendly language. Be encouraging. Avoid hallucinating specific piece locations or captures unless they are stated in the facts above."""
 
@@ -839,6 +997,7 @@ async def get_deviation_coaching(
     deviation_best_line_san: list[str] | None = None,
     game_move_number: int | None = None,
     username: str | None = None,
+    profile: dict | None = None,
     api_key: str | None = None,
     model: str | None = None,
 ) -> str:
@@ -860,6 +1019,7 @@ async def get_deviation_coaching(
         deviation_best_line_san=deviation_best_line_san or [],
         game_move_number=game_move_number,
         username=username,
+        profile=profile,
     )
 
     logger.info(
@@ -879,4 +1039,3 @@ async def get_deviation_coaching(
 
     content = response.choices[0].message.content or "No coaching response received."
     return content
-

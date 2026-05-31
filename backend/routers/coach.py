@@ -1,9 +1,30 @@
 from fastapi import APIRouter, HTTPException
 from models import CoachRequest, PerMoveCoachRequest, DeviationCoachRequest
 from services.llm_service import COACHING_CACHE_VERSION, get_coaching, get_per_move_coaching, get_deviation_coaching
-from services.db import save_move_coaching, get_move_coaching
+from services.db import get_move_coaching, get_player_profile, save_move_coaching
 
 router = APIRouter()
+
+
+def _get_active_coaching_profile() -> dict:
+    profile = get_player_profile() or {}
+    return {
+        "username": profile.get("username"),
+        "main_time_control": profile.get("main_time_control"),
+        "improvement_goal": profile.get("improvement_goal"),
+        "focus_area": profile.get("focus_area"),
+    }
+
+
+def _public_coaching_profile(profile: dict) -> dict | None:
+    public_profile = {
+        "main_time_control": profile.get("main_time_control"),
+        "improvement_goal": profile.get("improvement_goal"),
+        "focus_area": profile.get("focus_area"),
+    }
+    if any(public_profile.values()):
+        return public_profile
+    return None
 
 
 @router.post("/coach")
@@ -15,12 +36,14 @@ async def get_coach_feedback(req: CoachRequest):
         raise HTTPException(status_code=400, detail="player_color must be 'white' or 'black'")
 
     try:
+        profile = _get_active_coaching_profile()
         feedback = await get_coaching(
             analysis=req.analysis,
             player_color=req.player_color,
-            username=req.username,
+            username=req.username or profile.get("username"),
+            profile=profile,
         )
-        return {"coaching": feedback}
+        return {"coaching": feedback, "profile_used": _public_coaching_profile(profile)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM coaching failed: {str(e)}")
 
@@ -39,16 +62,19 @@ async def get_per_move_coach_feedback(req: PerMoveCoachRequest):
     cached = get_move_coaching(req.pgn_hash, version=COACHING_CACHE_VERSION) or []
     cached_map = {item["move_index"]: item["feedback"] for item in cached}
     missing_indices = [idx for idx in expected_indices if idx not in cached_map]
+    profile = _get_active_coaching_profile()
+    public_profile = _public_coaching_profile(profile)
 
     if not missing_indices:
         coaching = [{"move_index": idx, "feedback": cached_map[idx]} for idx in expected_indices]
-        return {"coaching": coaching, "cached": True}
+        return {"coaching": coaching, "cached": True, "profile_used": public_profile}
 
     try:
         coaching = await get_per_move_coaching(
             analysis=req.analysis,
             player_color=req.player_color,
-            username=req.username,
+            username=req.username or profile.get("username"),
+            profile=profile,
             target_move_indices=missing_indices,
         )
         if coaching:
@@ -56,7 +82,7 @@ async def get_per_move_coach_feedback(req: PerMoveCoachRequest):
             cached_map.update({item["move_index"]: item["feedback"] for item in coaching})
 
         merged = [{"move_index": idx, "feedback": cached_map[idx]} for idx in expected_indices if idx in cached_map]
-        return {"coaching": merged, "cached": False}
+        return {"coaching": merged, "cached": False, "profile_used": public_profile}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Per-move coaching failed: {str(e)}")
 
@@ -65,9 +91,12 @@ async def get_per_move_coach_feedback(req: PerMoveCoachRequest):
 async def get_cached_per_move_coaching(pgn_hash: str):
     """Retrieve previously generated per-move coaching from DB."""
     coaching = get_move_coaching(pgn_hash, version=COACHING_CACHE_VERSION)
-    if coaching is None:
-        raise HTTPException(status_code=404, detail="No per-move coaching found for this game")
-    return {"coaching": coaching, "cached": True}
+    profile = _get_active_coaching_profile()
+    return {
+        "coaching": coaching or [],
+        "cached": coaching is not None,
+        "profile_used": _public_coaching_profile(profile),
+    }
 
 
 @router.post("/coach/deviation")
@@ -79,6 +108,7 @@ async def get_deviation_coach_feedback(req: DeviationCoachRequest):
         raise HTTPException(status_code=400, detail="player_color must be 'white' or 'black'")
 
     try:
+        profile = _get_active_coaching_profile()
         feedback = await get_deviation_coaching(
             fen_before=req.fen_before,
             move_uci=req.move_uci,
@@ -93,9 +123,9 @@ async def get_deviation_coach_feedback(req: DeviationCoachRequest):
             best_line_san=req.best_line_san,
             deviation_best_line_san=req.deviation_best_line_san,
             game_move_number=req.game_move_number,
-            username=req.username,
+            username=req.username or profile.get("username"),
+            profile=profile,
         )
-        return {"coaching": feedback}
+        return {"coaching": feedback, "profile_used": _public_coaching_profile(profile)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Deviation coaching failed: {str(e)}")
-

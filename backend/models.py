@@ -110,3 +110,11 @@ class DeviationCoachRequest(BaseModel):
     deviation_best_line_san: list[str] = Field(default_factory=list)  # PV from deviation pos
     game_move_number: Optional[int] = None
     username: Optional[str] = None
+
+
+class PlayerProfileRequest(BaseModel):
+    username: Optional[str] = None
+    platform: str = "chesscom"
+    main_time_control: Optional[str] = None
+    improvement_goal: Optional[str] = None
+    focus_area: Optional[str] = None

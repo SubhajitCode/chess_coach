@@ -8,6 +8,7 @@ from typing import Any
 from services.stockfish_service import _estimate_elo, MAX_CP_LOSS_FOR_STATS
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "chess_analyzer.db")
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 ANALYSIS_CACHE_VERSION = 2
 
 
@@ -66,6 +67,18 @@ def init_db() -> None:
                 "ALTER TABLE move_coaching ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
             )
         conn.execute("UPDATE move_coaching SET version = 1 WHERE version IS NULL")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS player_profile (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                username TEXT,
+                platform TEXT NOT NULL DEFAULT 'chesscom',
+                main_time_control TEXT,
+                improvement_goal TEXT,
+                focus_area TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
 
 def pgn_hash(pgn: str) -> str:
@@ -117,6 +130,7 @@ def get_analysis(h: str) -> dict[str, Any] | None:
     )
     return {
         "pgn_hash": row["pgn_hash"],
+        "pgn": row["pgn"],
         "player_color": row["player_color"],
         "moves": moves,
         "summary": summary,
@@ -163,6 +177,11 @@ def save_move_coaching(pgn_hash: str, coaching: list[dict], version: int = 1) ->
         )
 
 
+def clear_move_coaching() -> None:
+    with _db() as conn:
+        conn.execute("DELETE FROM move_coaching")
+
+
 def get_move_coaching(pgn_hash: str, version: int = 1) -> list[dict] | None:
     """Return per-move coaching for a game, or None if not cached."""
     with _db() as conn:
@@ -173,3 +192,54 @@ def get_move_coaching(pgn_hash: str, version: int = 1) -> list[dict] | None:
     if not rows:
         return None
     return [{"move_index": r["move_index"], "feedback": r["feedback"]} for r in rows]
+
+
+def get_player_profile() -> dict[str, Any] | None:
+    init_db()
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM player_profile WHERE id = 1").fetchone()
+    if row is None:
+        return None
+    return {
+        "username": row["username"],
+        "platform": row["platform"],
+        "main_time_control": row["main_time_control"],
+        "improvement_goal": row["improvement_goal"],
+        "focus_area": row["focus_area"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def save_player_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    init_db()
+    with _db() as conn:
+        conn.execute(
+            """
+            INSERT INTO player_profile (
+                id,
+                username,
+                platform,
+                main_time_control,
+                improvement_goal,
+                focus_area,
+                updated_at
+            )
+            VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+                username = excluded.username,
+                platform = excluded.platform,
+                main_time_control = excluded.main_time_control,
+                improvement_goal = excluded.improvement_goal,
+                focus_area = excluded.focus_area,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                profile.get("username"),
+                profile.get("platform") or "chesscom",
+                profile.get("main_time_control"),
+                profile.get("improvement_goal"),
+                profile.get("focus_area"),
+            ),
+        )
+    return get_player_profile()

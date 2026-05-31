@@ -1,4 +1,4 @@
-export default function EvalBar({ evalScore, playerColor = 'white' }) {
+export default function EvalBar({ evalScore }) {
   // evalScore is in centipawns from White's perspective
   const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
 

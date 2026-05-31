@@ -33,6 +33,8 @@ const ELO_CALIBRATION_POINTS = [
   [200,  300],   // Very beginner
 ]
 
+const LAST_SESSION_STORAGE_KEY = 'chess_last_analysis_v1'
+
 function estimateElo(avgCpLoss) {
   if (avgCpLoss == null || Number.isNaN(avgCpLoss)) return null
 
@@ -111,8 +113,6 @@ export default function Analysis() {
   const playerColor = state?.playerColor || 'white'
   const username = state?.username
 
-  const [totalMoves, setTotalMoves] = useState(0)
-
   // currentIndex: -1 = start position, 0..n-1 = after move index
   const [currentIndex, setCurrentIndex] = useState(-1)
 
@@ -126,6 +126,7 @@ export default function Analysis() {
 
   // Coaching
   const [moveCoaching, setMoveCoaching] = useState({}) // map: move_index -> feedback string for all moves
+  const [coachProfile, setCoachProfile] = useState(null)
   const [coachLoading, setCoachLoading] = useState(false)
   const [coachError, setCoachError] = useState(null)
   const [pgnHash, setPgnHash] = useState(null)
@@ -149,6 +150,68 @@ export default function Analysis() {
   const abortRef = useRef(null)
   const moveTableRef = useRef(null)
   const previewActiveRef = useRef(false) // true while BestLineViewer is in preview mode
+  const trackLatestRef = useRef(true)
+
+  const clearPreviewState = useCallback(() => {
+    setBestLinePreview(null)
+    previewActiveRef.current = false
+  }, [])
+
+  const switchRightTab = useCallback((tab) => {
+    clearPreviewState()
+    setRightTab(tab)
+  }, [clearPreviewState])
+
+  const setTrackLatestState = useCallback((value) => {
+    trackLatestRef.current = value
+    setTrackLatest(value)
+  }, [])
+
+  useEffect(() => {
+    if (!game?.pgn) {
+      navigate('/', { replace: true })
+    }
+  }, [game?.pgn, navigate])
+
+  useEffect(() => {
+    if (!game?.pgn) return
+
+    const resumePayload = {
+      game: {
+        pgn: game.pgn,
+        white: game.white,
+        black: game.black,
+        result: game.result,
+        opening: game.opening,
+        time_control: game.time_control,
+        end_time: game.end_time,
+        source: game.source,
+        white_rating: game.white_rating,
+        black_rating: game.black_rating,
+        pgn_hash: pgnHash || game.pgn_hash || null,
+      },
+      playerColor,
+      username: username || null,
+      savedAt: new Date().toISOString(),
+    }
+
+    localStorage.setItem(LAST_SESSION_STORAGE_KEY, JSON.stringify(resumePayload))
+  }, [
+    game?.black,
+    game?.black_rating,
+    game?.end_time,
+    game?.opening,
+    game?.pgn,
+    game?.pgn_hash,
+    game?.result,
+    game?.source,
+    game?.time_control,
+    game?.white,
+    game?.white_rating,
+    pgnHash,
+    playerColor,
+    username,
+  ])
 
   // On mount, try to load a cached analysis for this game's PGN
   useEffect(() => {
@@ -159,9 +222,8 @@ export default function Analysis() {
         const hash = await computePgnHash(game.pgn)
         if (cancelled) return
         setPgnHash(hash)
-        const res = await getCachedAnalysis(hash)
-        if (cancelled) return
-        const cached = res.data
+        const cached = await getCachedAnalysis(hash)
+        if (cancelled || !cached) return
         setStreamedMoves(cached.moves || [])
 
         // Recompute the displayed estimate from move data so cached analyses
@@ -182,52 +244,44 @@ export default function Analysis() {
         if (openingFromPgn) setGameMeta(prev => ({ ...(prev || {}), opening: openingFromPgn }))
 
         setFromCache(true)
-        setTrackLatest(false)
+        setTrackLatestState(false)
         setCurrentIndex(-1)  // start at beginning
 
         // Also try loading cached per-move coaching
-        try {
-          const coachRes = await getCachedPerMoveCoaching(hash)
-          if (!cancelled && coachRes.data?.coaching) {
-            const coaching = coachRes.data.coaching
-            if (coaching.length >= (cached.moves || []).length) {
-              const map = {}
-              coaching.forEach(c => { map[c.move_index] = c.feedback })
-              setMoveCoaching(map)
-            }
+        const coachRes = await getCachedPerMoveCoaching(hash)
+        if (!cancelled) {
+          setCoachProfile(coachRes?.profile_used || null)
+        }
+        if (!cancelled && coachRes?.coaching?.length) {
+          const coaching = coachRes.coaching
+          if (coaching.length >= (cached.moves || []).length) {
+            const map = {}
+            coaching.forEach(c => { map[c.move_index] = c.feedback })
+            setMoveCoaching(map)
+            switchRightTab('coach')
           }
-        } catch {
-          // No cached coaching — will be generated after analysis
         }
       } catch {
-        // No cache — compute hash for later use
-        try {
-          const hash = await computePgnHash(game.pgn)
-          if (!cancelled) setPgnHash(hash)
-        } catch { /* ignore */ }
+        // Keep the page usable if cache bootstrap fails.
       }
     })()
     return () => { cancelled = true }
-  }, [game?.pgn])
+  }, [game?.pgn, playerColor, setTrackLatestState, switchRightTab])
 
   const parsedGameMoves = useMemo(() => parsePgnMoves(game?.pgn), [game?.pgn])
   const boardMoves = streamedMoves.length > 0 ? streamedMoves : parsedGameMoves
+  const totalMoves = gameMeta?.total_moves ?? parsedGameMoves.length
   const maxNavigableIndex = Math.max(-1, boardMoves.length - 1)
-
-  // Reset navigation when the selected game changes
-  useEffect(() => {
-    setTotalMoves(parsedGameMoves.length)
-    setCurrentIndex(-1)
-  }, [parsedGameMoves])
+  const activeIndex = currentIndex > maxNavigableIndex ? maxNavigableIndex : currentIndex
 
   // The FEN to show on the board
   const currentFen = useMemo(() => {
-    if (currentIndex < 0 || boardMoves.length === 0) {
+    if (activeIndex < 0 || boardMoves.length === 0) {
       return START_FEN
     }
 
     const ch = new Chess()
-    const moveCount = Math.min(currentIndex + 1, boardMoves.length)
+    const moveCount = Math.min(activeIndex + 1, boardMoves.length)
 
     for (let i = 0; i < moveCount; i += 1) {
       const uci = boardMoves[i]?.move_uci
@@ -243,7 +297,7 @@ export default function Analysis() {
     }
 
     return ch.fen()
-  }, [boardMoves, currentIndex])
+  }, [activeIndex, boardMoves])
   // When hovering a best-line step, show that position; otherwise show current game position
   const displayFen   = bestLinePreview?.fen ?? currentFen
   const boardPosition = displayFen.split(' ')[0]
@@ -260,7 +314,7 @@ export default function Analysis() {
 
     if (!showArrows) return []
 
-    const activeMove = currentIndex >= 0 ? boardMoves[currentIndex] : boardMoves[0]
+    const activeMove = activeIndex >= 0 ? boardMoves[activeIndex] : boardMoves[0]
     if (!activeMove) return []
 
     const arrows = []
@@ -276,7 +330,7 @@ export default function Analysis() {
 
     // Mistake / blunder arrow (Red)
     const isMistake = activeMove.classification === 'mistake' || activeMove.classification === 'blunder'
-    if (isMistake && currentIndex >= 0 && activeMove.move_uci && activeMove.move_uci.length >= 4) {
+    if (isMistake && activeIndex >= 0 && activeMove.move_uci && activeMove.move_uci.length >= 4) {
       arrows.push({
         startSquare: activeMove.move_uci.slice(0, 2),
         endSquare:   activeMove.move_uci.slice(2, 4),
@@ -285,10 +339,11 @@ export default function Analysis() {
     }
 
     return arrows
-  }, [showArrows, currentIndex, boardMoves, bestLinePreview])
+  }, [showArrows, activeIndex, boardMoves, bestLinePreview])
 
-  const currentMove = streamedMoves[currentIndex] || parsedGameMoves[currentIndex] || null
+  const currentMove = streamedMoves[activeIndex] || parsedGameMoves[activeIndex] || null
   const currentEval = currentMove?.eval_after ?? null
+  const hasMoveCoaching = Object.keys(moveCoaching).length > 0
 
   // Highlighted squares for the last move played
   const highlightSquares = currentMove
@@ -302,18 +357,23 @@ export default function Analysis() {
     // Cancel any in-flight stream
     abortRef.current?.abort()
 
+    clearPreviewState()
     setAnalyzing(true)
     setAnalyzeError(null)
     setStreamedMoves([])
     setSummary(null)
     setGameMeta(null)
     setMoveCoaching({})
+    setCoachProfile(null)
     setCoachLoading(false)
     setCoachError(null)
     setAnalyzedCount(0)
-    setTrackLatest(true)
+    setTrackLatestState(true)
     setCurrentIndex(-1)
     setFromCache(false)
+    setExploreMode(false)
+    setExploreStack([])
+    setRightTab('moves')
 
     // Capture moves and summary to trigger coaching after stream
     const collectedMovesRef = { current: [] }
@@ -327,16 +387,18 @@ export default function Analysis() {
       onMeta: (meta) => {
         setGameMeta(meta)
         collectedMetaRef.current = meta
-        if (typeof meta.total_moves === 'number') {
-          setTotalMoves(meta.total_moves)
-        }
       },
       onMove: (move) => {
+        let nextLength = 0
         setStreamedMoves(prev => {
           const updated = [...prev, move]
           collectedMovesRef.current = updated
+          nextLength = updated.length
           return updated
         })
+        if (trackLatestRef.current) {
+          setCurrentIndex(nextLength - 1)
+        }
         setAnalyzedCount(c => c + 1)
       },
       onSummary: (s) => {
@@ -345,7 +407,7 @@ export default function Analysis() {
       },
       onDone: async () => {
         setAnalyzing(false)
-        setTrackLatest(false)
+        setTrackLatestState(false)
         // Auto-generate per-move coaching
         const moves = collectedMovesRef.current
         const summ = collectedSummaryRef.current
@@ -364,7 +426,9 @@ export default function Analysis() {
             const map = {}
             res.data.coaching.forEach(c => { map[c.move_index] = c.feedback })
             setMoveCoaching(map)
+            setCoachProfile(res.data.profile_used || null)
             setCoachError(null)
+            switchRightTab('coach')
           } catch (err) {
             const detail = err?.response?.data?.detail || err?.message || 'Coaching failed'
             setCoachError(detail)
@@ -376,51 +440,37 @@ export default function Analysis() {
       onError: (msg) => {
         setAnalyzeError(msg)
         setAnalyzing(false)
+        setTrackLatestState(false)
       },
     })
   }
-
-  // While streaming, if trackLatest is on, auto-advance board to latest analyzed move
-  useEffect(() => {
-    if (trackLatest && analyzing && streamedMoves.length > 0) {
-      setCurrentIndex(streamedMoves.length - 1)
-    }
-  }, [streamedMoves.length, trackLatest, analyzing])
-
-  useEffect(() => {
-    setCurrentIndex((index) => Math.min(index, maxNavigableIndex))
-  }, [maxNavigableIndex])
 
   // Cleanup on unmount
   useEffect(() => () => abortRef.current?.abort(), [])
 
   const handleMoveClick = useCallback((index) => {
-    setTrackLatest(false)
-    setBestLinePreview(null)
-    previewActiveRef.current = false
+    setTrackLatestState(false)
+    clearPreviewState()
     setCurrentIndex(index)
-    setRightTab(tab => Object.keys(moveCoaching).length > 0 ? 'coach' : tab)
-  }, [moveCoaching])
+    if (hasMoveCoaching) {
+      switchRightTab('coach')
+    }
+  }, [clearPreviewState, hasMoveCoaching, setTrackLatestState, switchRightTab])
 
   const handleKeyDown = useCallback((e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return
     // Don't interfere while BestLineViewer has taken over arrow keys for step navigation
     if (previewActiveRef.current) return
     if (e.key === 'ArrowLeft') {
-      setTrackLatest(false)
-      setBestLinePreview(null)
+      setTrackLatestState(false)
+      clearPreviewState()
       setCurrentIndex(i => Math.max(-1, i - 1))
     } else if (e.key === 'ArrowRight') {
-      setTrackLatest(false)
-      setBestLinePreview(null)
+      setTrackLatestState(false)
+      clearPreviewState()
       setCurrentIndex(i => Math.min(maxNavigableIndex, i + 1))
     }
-  }, [maxNavigableIndex])
-
-  // Auto-switch to coach tab the first time coaching data arrives
-  useEffect(() => {
-    if (Object.keys(moveCoaching).length > 0) setRightTab('coach')
-  }, [moveCoaching])
+  }, [clearPreviewState, maxNavigableIndex, setTrackLatestState])
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown)
@@ -447,6 +497,8 @@ export default function Analysis() {
       const map = {}
       res.data.coaching.forEach(c => { map[c.move_index] = c.feedback })
       setMoveCoaching(map)
+      setCoachProfile(res.data.profile_used || null)
+      switchRightTab('coach')
     } catch (err) {
       const detail = err?.response?.data?.detail || err?.message || 'Coaching failed'
       setCoachError(detail)
@@ -465,32 +517,28 @@ export default function Analysis() {
   }, [exploreMode, exploreStack, currentFen])
 
   const handleEnterExplore = useCallback(() => {
-    setBestLinePreview(null)
-    previewActiveRef.current = false
+    clearPreviewState()
     setExploreStack([])
     setExploreMode(true)
     setRightTab('explore')
-  }, [])
+  }, [clearPreviewState])
 
   const handleExitExplore = useCallback(() => {
     setExploreMode(false)
     setExploreStack([])
-    setBestLinePreview(null)
-    previewActiveRef.current = false
-    setRightTab(Object.keys(moveCoaching).length > 0 ? 'coach' : 'moves')
-  }, [moveCoaching])
+    clearPreviewState()
+    setRightTab(hasMoveCoaching ? 'coach' : 'moves')
+  }, [clearPreviewState, hasMoveCoaching])
 
   const handleExploreUndo = useCallback(() => {
-    setBestLinePreview(null)
-    previewActiveRef.current = false
+    clearPreviewState()
     setExploreStack(prev => prev.slice(0, -1))
-  }, [])
+  }, [clearPreviewState])
 
   const handleExploreReset = useCallback(() => {
-    setBestLinePreview(null)
-    previewActiveRef.current = false
+    clearPreviewState()
     setExploreStack([])
-  }, [])
+  }, [clearPreviewState])
 
   // v5 API: onPieceDrop receives { piece, sourceSquare, targetSquare }
   const handleExplorePieceDrop = useCallback(async ({ piece, sourceSquare, targetSquare }) => {
@@ -503,7 +551,7 @@ export default function Analysis() {
     // Validate with chess.js
     const fenToPlayOn = exploreStack.length === 0 ? currentFen : (exploreStack[exploreStack.length - 1].fenAfter ?? currentFen)
     const ch = new Chess(fenToPlayOn)
-    const result = ch.move({ from: sourceSquare, to: targetSquare, promotion: isPromotion ? promotionPiece : undefined })
+    const result = ch.move({ from: sourceSquare, to: targetSquare, promotion: isPromotion ? 'q' : undefined })
     if (!result) return false  // illegal move — reject drop
 
     // Kick off Stockfish analysis
@@ -545,9 +593,9 @@ export default function Analysis() {
       setExploreAnalyzing(false)
     }
     return true  // accept the drop
-  }, [currentFen, exploreStack, playerColor])
+  }, [currentFen, exploreStack])
 
-  if (!game) {
+  if (!game?.pgn) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center text-gray-400">
         No game selected.{' '}
@@ -678,7 +726,7 @@ export default function Analysis() {
 
             {/* Eval Bar + Board row */}
             <div className="flex gap-2">
-              <EvalBar evalScore={currentEval} playerColor={playerColor} />
+              <EvalBar evalScore={currentEval} />
 
               {/* Board */}
               <div className="w-[520px] rounded-xl overflow-hidden border border-gray-700 shadow-2xl relative">
@@ -720,16 +768,16 @@ export default function Analysis() {
 
             {/* Navigation */}
             <div className="flex items-center gap-1.5 bg-gray-900 rounded-xl p-1.5 border border-gray-700">
-                <NavButton onClick={() => { setTrackLatest(false); setBestLinePreview(null); setCurrentIndex(-1) }} label="⟨⟨" title="Start" />
-                <NavButton onClick={() => { setTrackLatest(false); setBestLinePreview(null); setCurrentIndex(i => Math.max(-1, i - 1)) }} label="⟨" title="Previous (←)" />
+                <NavButton onClick={() => { setTrackLatestState(false); clearPreviewState(); setCurrentIndex(-1) }} label="⟨⟨" title="Start" />
+                <NavButton onClick={() => { setTrackLatestState(false); clearPreviewState(); setCurrentIndex(i => Math.max(-1, i - 1)) }} label="⟨" title="Previous (←)" />
                 <div className="flex-1 text-center text-xs text-gray-400">
-                  {currentIndex < 0
+                  {activeIndex < 0
                     ? <span className="text-gray-500">Start position</span>
                     : <span>Move {currentMove?.move_number} <span className="font-mono text-white font-semibold">{currentMove?.move_san}</span></span>
                   }
                 </div>
-                <NavButton onClick={() => { setTrackLatest(false); setBestLinePreview(null); setCurrentIndex(i => Math.min(maxNavigableIndex, i + 1)) }} label="⟩" title="Next (→)" />
-                <NavButton onClick={() => { setTrackLatest(false); setBestLinePreview(null); setCurrentIndex(maxNavigableIndex) }} label="⟩⟩" title="End" />
+                <NavButton onClick={() => { setTrackLatestState(false); clearPreviewState(); setCurrentIndex(i => Math.min(maxNavigableIndex, i + 1)) }} label="⟩" title="Next (→)" />
+                <NavButton onClick={() => { setTrackLatestState(false); clearPreviewState(); setCurrentIndex(maxNavigableIndex) }} label="⟩⟩" title="End" />
               </div>
 
             {/* Explore Mode toggle button */}
@@ -769,7 +817,14 @@ export default function Analysis() {
             {/* Track latest toggle when streaming */}
             {analyzing && streamedMoves.length > 0 && (
               <button
-                onClick={() => setTrackLatest(v => !v)}
+                onClick={() => {
+                  const nextValue = !trackLatestRef.current
+                  setTrackLatestState(nextValue)
+                  if (nextValue && streamedMoves.length > 0) {
+                    clearPreviewState()
+                    setCurrentIndex(streamedMoves.length - 1)
+                  }
+                }}
                 className={`text-xs py-1.5 px-3 rounded-lg border transition-colors text-center ml-7
                   ${trackLatest
                     ? 'border-blue-500 text-blue-400 bg-blue-900/20'
@@ -795,21 +850,21 @@ export default function Analysis() {
               <div className="flex-shrink-0 flex items-center gap-1 border-b border-gray-700 mb-0">
                 <RightTabButton
                   active={rightTab === 'moves'}
-                  onClick={() => setRightTab('moves')}
+                  onClick={() => switchRightTab('moves')}
                 >
                   📋 Moves
                 </RightTabButton>
                 <RightTabButton
                   active={rightTab === 'coach'}
-                  onClick={() => setRightTab('coach')}
-                  badge={Object.keys(moveCoaching).length > 0}
+                  onClick={() => switchRightTab('coach')}
+                  badge={hasMoveCoaching}
                 >
                   🎓 Coach
                 </RightTabButton>
                 {exploreMode && (
                   <RightTabButton
                     active={rightTab === 'explore'}
-                    onClick={() => setRightTab('explore')}
+                    onClick={() => switchRightTab('explore')}
                   >
                     🔍 Explore
                   </RightTabButton>
@@ -855,7 +910,7 @@ export default function Analysis() {
                   {streamedMoves.length > 0 && (
                     <EvalChart
                       moves={streamedMoves}
-                      currentIndex={currentIndex}
+                      currentIndex={activeIndex}
                       onMoveClick={handleMoveClick}
                     />
                   )}
@@ -865,8 +920,7 @@ export default function Analysis() {
                     <div ref={moveTableRef}>
                       <MoveTable
                         moves={streamedMoves}
-                        currentIndex={currentIndex}
-                        playerColor={playerColor}
+                        currentIndex={activeIndex}
                         onMoveClick={handleMoveClick}
                       />
                     </div>
@@ -895,16 +949,17 @@ export default function Analysis() {
               {rightTab === 'coach' && streamedMoves.length > 0 && (
                 <CoachPanel
                   moveCoaching={moveCoaching}
-                  currentIndex={currentIndex}
+                  currentIndex={activeIndex}
                   currentMove={currentMove}
                   playerColor={playerColor}
                   loading={coachLoading}
                   error={coachError}
                   hasAnalysis={!!fullAnalysis}
+                  coachingProfile={coachProfile}
                   onRequest={handleRequestCoaching}
                   analyzing={analyzing}
                   onPreviewBestLineStep={setBestLinePreview}
-                  onResetBestLinePreview={() => setBestLinePreview(null)}
+                  onResetBestLinePreview={clearPreviewState}
                   onPreviewModeChange={(active) => { previewActiveRef.current = active }}
                 />
               )}
@@ -912,13 +967,14 @@ export default function Analysis() {
               {/* ── Explore tab ── */}
               {rightTab === 'explore' && exploreMode && (
                 <DeviationPanel
+                  key={`explore-${currentIndex}-${exploreStack.length}`}
                   exploreStack={exploreStack}
                   analyzing={exploreAnalyzing}
                   playerColor={playerColor}
                   gameMoveNumber={currentMove?.move_number}
                   username={username}
                   onPreviewStep={setBestLinePreview}
-                  onExitPreview={() => setBestLinePreview(null)}
+                  onExitPreview={clearPreviewState}
                   onPreviewModeChange={(active) => { previewActiveRef.current = active }}
                   onUndo={handleExploreUndo}
                   onReset={handleExploreReset}

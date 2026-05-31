@@ -15,16 +15,22 @@ export const getPerMoveCoaching = (pgnHash, analysis, playerColor, username = nu
   api.post('/coach/per-move', { pgn_hash: pgnHash, analysis, player_color: playerColor, username })
 
 export const getCachedPerMoveCoaching = (pgnHash) =>
-  api.get(`/coach/per-move/${pgnHash}`)
+  api.get(`/coach/per-move/${pgnHash}`).then((res) => res.data)
 
 export const getCachedAnalysis = (pgnHash) =>
-  api.get(`/analysis/cached/${pgnHash}`)
+  api.get(`/analysis/cached/${pgnHash}`).then((res) => res.data.cached)
 
 export const deleteCachedAnalysis = (pgnHash) =>
   api.delete(`/analysis/cached/${pgnHash}`)
 
 export const checkPgnCache = (pgns) =>
   api.post('/analysis/check-cache', { pgns })
+
+export const getPlayerProfile = () =>
+  api.get('/profile')
+
+export const savePlayerProfile = (profile) =>
+  api.put('/profile', profile)
 
 /**
  * Compute a simple 24-char hex hash of a PGN string (matches backend sha256 truncated).
@@ -107,4 +113,3 @@ export function analyzeGameStream({ pgn, depth = 18, playerColor = 'white', onMe
 
   return controller
 }
-

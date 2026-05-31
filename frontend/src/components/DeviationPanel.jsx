@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Chess } from 'chess.js'
 import { getDeviationCoaching } from '../api/chess'
@@ -90,8 +90,6 @@ function LineViewer({ label, uciList, fenBefore, onStepPreview, onExitPreview, o
   const steps = decodeLine(fenBefore, uciList)
   const [activeIdx, setActiveIdx] = useState(null)
   const isActive = activeIdx !== null
-  const activeIdxRef = useRef(activeIdx)
-  activeIdxRef.current = activeIdx
 
   const activateStep = useCallback((idx) => {
     const clamped = Math.max(0, Math.min(steps.length - 1, idx))
@@ -111,10 +109,10 @@ function LineViewer({ label, uciList, fenBefore, onStepPreview, onExitPreview, o
     const handler = (e) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault(); e.stopPropagation()
-        activateStep(Math.min(steps.length - 1, activeIdxRef.current + 1))
+        activateStep(Math.min(steps.length - 1, activeIdx + 1))
       } else if (e.key === 'ArrowUp') {
         e.preventDefault(); e.stopPropagation()
-        activateStep(Math.max(0, activeIdxRef.current - 1))
+        activateStep(Math.max(0, activeIdx - 1))
       } else if (e.key === 'Escape') {
         e.preventDefault(); e.stopPropagation()
         exit()
@@ -122,12 +120,7 @@ function LineViewer({ label, uciList, fenBefore, onStepPreview, onExitPreview, o
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [isActive, steps.length, activateStep, exit])
-
-  // Reset when fenBefore changes (user navigated)
-  useEffect(() => {
-    setActiveIdx(null)
-  }, [fenBefore])
+  }, [activeIdx, isActive, steps.length, activateStep, exit])
 
   if (!steps.length) return null
 
@@ -229,12 +222,6 @@ export default function DeviationPanel({
   const [coachError, setCoachError] = useState(null)
 
   const latest = exploreStack[exploreStack.length - 1] ?? null
-
-  // Reset coaching when position changes
-  useEffect(() => {
-    setCoaching(null)
-    setCoachError(null)
-  }, [exploreStack.length])
 
   const handleExplain = async () => {
     if (!latest) return

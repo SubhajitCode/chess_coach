@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Chess } from 'chess.js'
 
@@ -42,6 +42,14 @@ function cpLossDescription(loss) {
   if (loss < 50)  return 'Noticeable advantage lost'
   if (loss < 100) return 'Significant advantage lost'
   return 'Major blunder — large advantage given away'
+}
+
+function prettifyProfileValue(value) {
+  if (!value) return null
+  return value
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 /** Decode a list of UCI moves starting from fenBefore into plain-English steps */
@@ -139,7 +147,6 @@ function BestMoveCard({ uci, san, summary, fenBefore, onPreview, onExitPreview, 
   if (!san || !uci) return null
 
   let display = summary || san
-  let icon = '?'
   try {
     const chess = new Chess(fenBefore)
     const from  = uci.slice(0, 2)
@@ -147,7 +154,7 @@ function BestMoveCard({ uci, san, summary, fenBefore, onPreview, onExitPreview, 
     const piece  = chess.get(from)
     const target = chess.get(to)
     if (piece) {
-      icon = PIECE_ICONS[piece.color][piece.type]
+      const icon = PIECE_ICONS[piece.color][piece.type]
       const result = chess.move({ from, to, promotion: uci[4] || undefined })
       if (result) {
         const isCastle = result.flags?.includes('k') || result.flags?.includes('q')
@@ -193,8 +200,6 @@ function BestLineViewer({ uciList, fenBefore, onStepPreview, onExitPreview, onPr
   const steps = decodeLine(fenBefore, uciList)
   const [activeIdx, setActiveIdx] = useState(null) // null = inactive
   const isActive = activeIdx !== null
-  const activeIdxRef = useRef(activeIdx)
-  activeIdxRef.current = activeIdx
 
   const activateStep = useCallback((idx) => {
     const clamped = Math.max(0, Math.min(steps.length - 1, idx))
@@ -215,11 +220,11 @@ function BestLineViewer({ uciList, fenBefore, onStepPreview, onExitPreview, onPr
     const handler = (e) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault(); e.stopPropagation()
-        const next = Math.min(steps.length - 1, activeIdxRef.current + 1)
+        const next = Math.min(steps.length - 1, activeIdx + 1)
         activateStep(next)
       } else if (e.key === 'ArrowUp') {
         e.preventDefault(); e.stopPropagation()
-        const prev = Math.max(0, activeIdxRef.current - 1)
+        const prev = Math.max(0, activeIdx - 1)
         activateStep(prev)
       } else if (e.key === 'Escape') {
         e.preventDefault(); e.stopPropagation()
@@ -228,7 +233,7 @@ function BestLineViewer({ uciList, fenBefore, onStepPreview, onExitPreview, onPr
     }
     window.addEventListener('keydown', handler, true) // capture phase
     return () => window.removeEventListener('keydown', handler, true)
-  }, [isActive, steps.length, activateStep, exit])
+  }, [activeIdx, isActive, steps.length, activateStep, exit])
 
   if (!steps.length) return null
 
@@ -337,6 +342,7 @@ export default function CoachPanel({
   loading,
   error,
   hasAnalysis,
+  coachingProfile,
   onRequest,
   analyzing,
   onPreviewBestLineStep,
@@ -353,36 +359,37 @@ export default function CoachPanel({
   const moveOwnerClass  = isPlayerMove
     ? 'bg-blue-900/40 text-blue-300 border-blue-700/60'
     : 'bg-violet-900/30 text-violet-300 border-violet-700/60'
+  const profileTags = [
+    coachingProfile?.main_time_control && `Time: ${prettifyProfileValue(coachingProfile.main_time_control)}`,
+    coachingProfile?.improvement_goal && `Goal: ${prettifyProfileValue(coachingProfile.improvement_goal)}`,
+    coachingProfile?.focus_area && `Focus: ${prettifyProfileValue(coachingProfile.focus_area)}`,
+  ].filter(Boolean)
 
   // Track which preview is active: 'bestmove' | null
-  const [bestMovePreviewOn, setBestMovePreviewOn] = useState(false)
+  const [bestMovePreviewIndex, setBestMovePreviewIndex] = useState(null)
+  const bestMovePreviewOn = bestMovePreviewIndex === currentIndex
 
   const handleBestMovePreview = useCallback(() => {
     const uci = currentMove?.best_move_uci
     const fen = currentMove?.fen_before
     if (!uci || !fen) return
-    setBestMovePreviewOn(true)
+    setBestMovePreviewIndex(currentIndex)
     onPreviewBestLineStep?.({ fen, from: uci.slice(0, 2), to: uci.slice(2, 4) })
-  }, [currentMove, onPreviewBestLineStep])
+  }, [currentIndex, currentMove, onPreviewBestLineStep])
 
   const handleBestMoveExitPreview = useCallback(() => {
-    setBestMovePreviewOn(false)
+    setBestMovePreviewIndex(null)
     onResetBestLinePreview?.()
   }, [onResetBestLinePreview])
 
   const handleLineStepPreview = useCallback((step) => {
-    setBestMovePreviewOn(false)
+    setBestMovePreviewIndex(null)
     onPreviewBestLineStep?.({ fen: step.fenAfter, from: step.from, to: step.to })
   }, [onPreviewBestLineStep])
 
   const handleLineExitPreview = useCallback(() => {
     onResetBestLinePreview?.()
   }, [onResetBestLinePreview])
-
-  // Reset best-move card preview whenever we change moves
-  useEffect(() => {
-    setBestMovePreviewOn(false)
-  }, [currentIndex])
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
@@ -408,6 +415,18 @@ export default function CoachPanel({
       </div>
 
       <div className="p-4 min-h-[80px] flex flex-col gap-3">
+        {profileTags.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {profileTags.map((tag) => (
+              <span
+                key={tag}
+                className="rounded-full border border-cyan-700/60 bg-cyan-950/30 px-2.5 py-1 text-[11px] font-medium text-cyan-200"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* ── Error ── */}
         {error && (

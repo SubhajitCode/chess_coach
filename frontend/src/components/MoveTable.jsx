@@ -25,7 +25,7 @@ const CLASSIFICATION_ICONS = {
   blunder: '??',
 }
 
-export default function MoveTable({ moves, currentIndex, playerColor, onMoveClick }) {
+export default function MoveTable({ moves, currentIndex, onMoveClick }) {
   if (!moves || moves.length === 0) return null
 
   // Pair moves into rows (white + black), tracking array indices explicitly
@@ -72,7 +72,6 @@ function MoveCell({ move, index, currentIndex, onMoveClick }) {
 
   const cls = move.classification
   const isActive = index === currentIndex
-  const isPlayer = true
 
   return (
     <button
