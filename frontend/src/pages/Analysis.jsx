@@ -452,10 +452,13 @@ export default function Analysis() {
     setTrackLatestState(false)
     clearPreviewState()
     setCurrentIndex(index)
-    if (hasMoveCoaching) {
-      switchRightTab('coach')
+    // Avoid jumping to the Coach tab when clicking moves in the Moves tab.
+    // Keep the user on the current tab and just update the eval/chart pointer.
+    // Only ensure the Coach tab remains visible if the user is already viewing it.
+    if (hasMoveCoaching && rightTab === 'coach') {
+      // coach remains visible; CoachPanel can react to currentIndex via props
     }
-  }, [clearPreviewState, hasMoveCoaching, setTrackLatestState, switchRightTab])
+  }, [clearPreviewState, hasMoveCoaching, setTrackLatestState, rightTab])
 
   const handleKeyDown = useCallback((e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return
