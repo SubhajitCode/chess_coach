@@ -2,8 +2,11 @@ import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Chessboard } from 'react-chessboard'
 import { Chess } from 'chess.js'
+import ReactMarkdown from 'react-markdown'
+import { analyzePosition, getDeviationCoaching } from '../api/chess'
+import EvalBar from '../components/EvalBar'
 
-const BOARD_SIZE = 500
+const BOARD_SIZE = 520
 const MAX_ATTEMPTS = 3
 
 const CLS_META = {
@@ -49,9 +52,64 @@ function uciToReadable(uci) {
   return `${uci.slice(0, 2).toUpperCase()} → ${uci.slice(2, 4).toUpperCase()}`
 }
 
+/**
+ * Decode a UCI move list into human-readable steps and fenAfter for preview.
+ * Returns [{ uci, from, to, san, fenAfter, isCapture, isCheck }]
+ */
+function decodeLine(fenBefore, uciList, limit = 6) {
+  if (!fenBefore || !uciList?.length) return []
+  try {
+    const chess = new Chess(fenBefore)
+    const steps = []
+    for (const uci of uciList.slice(0, limit)) {
+      if (!uci || uci.length < 4) break
+      const from = uci.slice(0, 2)
+      const to = uci.slice(2, 4)
+      const promo = uci[4] || undefined
+      const piece = chess.get(from)
+      const target = chess.get(to)
+
+      const fenBeforeStep = chess.fen()
+      const result = chess.move({ from, to, promotion: promo })
+      if (!result) break
+
+      const isCheck = chess.inCheck ? chess.inCheck() : (chess?.in_check ? chess.is_check() : false)
+      const isMate = chess.isCheckmate ? chess.isCheckmate() : (chess?.is_checkmate ? chess.is_checkmate() : false)
+
+      steps.push({
+        uci,
+        from,
+        to,
+        san: result.san,
+        fenBefore: fenBeforeStep,
+        fenAfter: chess.fen(),
+        isCapture: !!target,
+        isCheck: !!isCheck,
+        isMate: !!isMate,
+        evalBefore: null,
+        evalAfter: null,
+      })
+    }
+    return steps
+  } catch {
+    return []
+  }
+}
+
 export default function Practice() {
-  const { state } = useLocation()
+  const rawLocation = useLocation()
   const navigate = useNavigate()
+  // Allow passing a serialized state via query param for testing (fallback)
+  const state = rawLocation.state ?? (() => {
+    try {
+      const s = new URLSearchParams(window.location.search).get('state')
+      if (!s) return null
+      return JSON.parse(decodeURIComponent(s))
+    } catch {
+      return null
+    }
+  })()
+
 
   const moves = useMemo(() => state?.moves ?? [], [state])
   const playerColor = state?.playerColor || 'white'
@@ -80,6 +138,24 @@ export default function Practice() {
 
   const fensBefore = useMemo(() => buildFensBefore(moves), [moves])
   const fensAfter = useMemo(() => buildFensAfter(moves), [moves])
+
+  // Deep analysis settings for on-demand explanations
+  const DEPTH_DEEP = 22
+  const PV_LENGTH = 6
+
+  // Cache explanations per global move index (originalIdx)
+  const [explanations, setExplanations] = useState({}) // { [originalIdx]: { loading, error, text, depth, bestLineSan, bestLineUci, deviationBestLineSan, deviationBestLineUci } }
+
+  // Preview state for showing engine line steps on the board
+  const [bestLinePreview, setBestLinePreview] = useState(null) // { fen, from, to }
+  const [bestLineSteps, setBestLineSteps] = useState([])
+  const [bestLineIdx, setBestLineIdx] = useState(null)
+  const [devLineSteps, setDevLineSteps] = useState([])
+  const [devLineIdx, setDevLineIdx] = useState(null)
+  const [arrowMode, setArrowMode] = useState('original') // 'original' | 'preview' | 'both'
+
+  // Cached evals for review moves (keyed by reviewIndex)
+  const [evalCache, setEvalCache] = useState({})
 
   const allMistakes = useMemo(() =>
     moves
@@ -155,6 +231,50 @@ export default function Practice() {
     setStreak(0)
     setResults(r => [...r, 'skipped'])
   }, [])
+
+  const handleExplain = useCallback(async () => {
+    if (!current) return
+    const key = current.originalIdx
+    setExplanations(prev => ({ ...prev, [key]: { loading: true, error: null, text: null, depth: DEPTH_DEEP } }))
+    try {
+      const res = await analyzePosition(current.fenBefore, current.move_uci, DEPTH_DEEP, PV_LENGTH)
+      const d = res.data
+      const payload = {
+        fen_before: current.fenBefore,
+        move_uci: current.move_uci,
+        move_san: d.move_san || current.move_san || '',
+        move_summary: d.move_summary || current.move_summary || '',
+        player_color: playerColor,
+        eval_before: d.eval_before,
+        eval_after: d.eval_after,
+        cp_loss: d.cp_loss,
+        classification: d.classification,
+        best_move_san: d.best_move_san || current.best_move_san || '',
+        best_line_san: d.best_line_san || [],
+        deviation_best_line_san: d.deviation_best_line_san || [],
+        game_move_number: current.move_number,
+      }
+      const coachRes = await getDeviationCoaching(payload)
+      const coachingText = coachRes?.data?.coaching ?? (coachRes?.data || '')
+      setExplanations(prev => ({
+        ...prev,
+        [key]: {
+          loading: false,
+          error: null,
+          text: coachingText,
+          depth: DEPTH_DEEP,
+          bestLineSan: d.best_line_san || [],
+          bestLineUci: d.best_line_uci || [],
+          deviationBestLineSan: d.deviation_best_line_san || [],
+          deviationBestLineUci: d.deviation_best_line_uci || [],
+          fenAfter: d.fen_after || null,
+        },
+      }))
+    } catch (err) {
+      const msg = err?.response?.data?.detail || err?.message || 'Explanation failed'
+      setExplanations(prev => ({ ...prev, [key]: { loading: false, error: msg, text: null, depth: DEPTH_DEEP } }))
+    }
+  }, [current, playerColor])
 
   const handleNext = useCallback(() => {
     if (step + 1 >= filtered.length) {
@@ -240,20 +360,46 @@ export default function Practice() {
 
     const items = []
 
+    // Determine the "original" move (played) and its arrow color
+    let origUci = null
+    let origColor = '#ef4444'
     if (isPuzzlePosition && current.move_uci && current.move_uci.length >= 4) {
-      items.push({
-        startSquare: current.move_uci.slice(0, 2),
-        endSquare: current.move_uci.slice(2, 4),
-        color: '#ef4444',
-      })
+      origUci = current.move_uci
+      origColor = '#ef4444'
     } else if (reviewMove?.move_uci && reviewMove.move_uci.length >= 4) {
+      origUci = reviewMove.move_uci
+      origColor = reviewIndex === current.originalIdx ? '#ef4444' : 'rgba(148, 163, 184, 0.9)'
+    }
+
+    // If a best-line step preview is active, show preview and/or original based on arrowMode
+    if (bestLinePreview) {
+      if (arrowMode === 'preview' || arrowMode === 'both') {
+        items.push({
+          startSquare: bestLinePreview.from,
+          endSquare: bestLinePreview.to,
+          color: '#16a34a',
+        })
+      }
+      if ((arrowMode === 'original' || arrowMode === 'both') && origUci) {
+        items.push({
+          startSquare: origUci.slice(0, 2),
+          endSquare: origUci.slice(2, 4),
+          color: origColor,
+        })
+      }
+      return items
+    }
+
+    // No preview active — show original (unless arrowMode === 'preview')
+    if (arrowMode !== 'preview' && origUci) {
       items.push({
-        startSquare: reviewMove.move_uci.slice(0, 2),
-        endSquare: reviewMove.move_uci.slice(2, 4),
-        color: reviewIndex === current.originalIdx ? '#ef4444' : 'rgba(148, 163, 184, 0.9)',
+        startSquare: origUci.slice(0, 2),
+        endSquare: origUci.slice(2, 4),
+        color: origColor,
       })
     }
 
+    // Keep showing the best-move arrow when the answer is revealed (unchanged behavior)
     if (showAnswer && isPuzzlePosition && current.best_move_uci && current.best_move_uci.length >= 4) {
       items.push({
         startSquare: current.best_move_uci.slice(0, 2),
@@ -263,7 +409,7 @@ export default function Practice() {
     }
 
     return items
-  }, [showAnswer, current, isPuzzlePosition, reviewMove, reviewIndex])
+  }, [showAnswer, current, isPuzzlePosition, reviewMove, reviewIndex, bestLinePreview, arrowMode])
 
   const reviewLabel = useMemo(() => {
     if (!current) return ''
@@ -274,6 +420,28 @@ export default function Practice() {
     const mistakeLabel = reviewIndex === current.originalIdx ? ' · Mistake move' : ''
     return `${sideLabel} ${reviewMove.san || reviewMove.move_summary || uciToReadable(reviewMove.move_uci)}${mistakeLabel}`
   }, [current, reviewIndex, isPuzzlePosition, reviewMove, playerColor])
+
+  // Fetch and cache shallow eval for the review move when user navigates reviewIndex
+  useEffect(() => {
+    // If previewing best/dev line, those evals take precedence so don't fetch review eval
+    if (bestLineIdx !== null || devLineIdx !== null) return
+    if (reviewIndex < 0 || !reviewMove) return
+    if (evalCache[reviewIndex]) return // already cached
+
+    let cancelled = false
+    const DEPTH_PREVIEW = 12
+    ;(async () => {
+      try {
+        const res = await analyzePosition(reviewFen, reviewMove.move_uci, DEPTH_PREVIEW, 0)
+        if (cancelled) return
+        setEvalCache(prev => ({ ...prev, [reviewIndex]: { eval_before: res.data.eval_before, eval_after: res.data.eval_after } }))
+      } catch (err) {
+        // ignore
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [reviewIndex, reviewMove, reviewFen, bestLineIdx, devLineIdx, evalCache])
 
   const mineCount = allMistakes.filter(m => m.color === playerColor).length
   const oppCount  = allMistakes.filter(m => m.color !== playerColor).length
@@ -391,7 +559,7 @@ export default function Practice() {
 
         {/* ── Main layout ── */}
         <main className="flex-1 flex items-center justify-center p-4">
-          <div className="flex gap-8 items-center w-full" style={{ maxWidth: 860 }}>
+          <div className="grid gap-8 items-start w-full max-w-screen-2xl mx-auto grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
 
             {/* Board column */}
             <div className="flex flex-col items-center gap-3 flex-shrink-0">
@@ -410,30 +578,140 @@ export default function Practice() {
               </div>
 
               {/* Board */}
-              <div
-                className={`rounded-xl overflow-hidden border shadow-2xl transition-all duration-300 ${
-                  shake           ? 'border-red-600 board-shake'
-                  : phase === 'correct'  ? 'border-emerald-500 board-correct'
-                  : phase === 'revealed' ? 'border-gray-600'
-                  : 'border-gray-700'
-                }`}
-                style={{ width: BOARD_SIZE, height: BOARD_SIZE }}
-              >
-                <Chessboard
-                  options={{
-                    id: 'practice-board',
-                    position: reviewFen.split(' ')[0] || 'start',
-                    boardOrientation: current.color,
-                    boardWidth: BOARD_SIZE,
-                    allowDragging: phase === 'playing' && isPuzzlePosition,
-                    boardStyle: { borderRadius: '0' },
-                    darkSquareStyle:  { backgroundColor: '#4a7c59' },
-                    lightSquareStyle: { backgroundColor: '#f0d9b5' },
-                    squareStyles,
-                    arrows,
-                    onPieceDrop: handlePieceDrop,
-                  }}
-                />
+              <div className="w-full" style={{ maxWidth: 'min(900px, calc(100vw - 420px))' }}>
+                <div className="flex items-start gap-4 aspect-square">
+                  <div className="w-14 flex-shrink-0 h-full flex items-center justify-center">
+                    <EvalBar evalScore={(() => {
+                      // compute eval for current view: preview step -> dev step -> cached review eval -> review move -> current
+                      if (bestLineIdx !== null && bestLineSteps?.[bestLineIdx]?.evalAfter != null) return bestLineSteps[bestLineIdx].evalAfter
+                      if (devLineIdx !== null && devLineSteps?.[devLineIdx]?.evalAfter != null) return devLineSteps[devLineIdx].evalAfter
+                      const cached = evalCache?.[reviewIndex]
+                      if (cached?.eval_after != null) return cached.eval_after
+                      if (cached?.eval_before != null) return cached.eval_before
+                      if (reviewMove?.eval_after != null) return reviewMove.eval_after
+                      if (reviewMove?.eval_before != null) return reviewMove.eval_before
+                      if (current?.eval_after != null) return current.eval_after
+                      if (current?.eval_before != null) return current.eval_before
+                      return null
+                    })()} />
+                  </div>
+                  <div className={`flex-1 aspect-square rounded-xl overflow-hidden border shadow-2xl transition-all duration-300 mx-auto ${shake ? 'border-red-600 board-shake' : phase === 'correct' ? 'border-emerald-500 board-correct' : phase === 'revealed' ? 'border-gray-600' : 'border-gray-700'}`}>
+                    <Chessboard
+                      options={{
+                        id: 'practice-board',
+                        position: (bestLinePreview?.fen ?? reviewFen).split(' ')[0] || 'start',
+                        boardOrientation: current.color,
+                        allowDragging: phase === 'playing' && isPuzzlePosition,
+                        boardStyle: { borderRadius: '0' },
+                        darkSquareStyle:  { backgroundColor: '#4a7c59' },
+                        lightSquareStyle: { backgroundColor: '#f0d9b5' },
+                        squareStyles,
+                        arrows,
+                        onPieceDrop: handlePieceDrop,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+              {/* Inline engine preview controls (preview best / deviation lines on board) */}
+              <div className="mt-3 flex items-center gap-3">
+                <div className="flex items-center gap-2 text-xs text-gray-400">
+                  <span className="text-[11px] text-gray-500 mr-1">Show arrows:</span>
+                  <button onClick={() => setArrowMode('original')} className={`px-2 py-1 text-xs rounded ${arrowMode === 'original' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-300'}`}>Original</button>
+                  <button onClick={() => setArrowMode('preview')} className={`px-2 py-1 text-xs rounded ${arrowMode === 'preview' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-300'}`}>Blunder</button>
+                  <button onClick={() => setArrowMode('both')} className={`px-2 py-1 text-xs rounded ${arrowMode === 'both' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-300'}`}>Both</button>
+                </div>
+                {explanations[current.originalIdx]?.bestLineUci?.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        const uciList = explanations[current.originalIdx].bestLineUci || []
+                        const steps = decodeLine(current.fenBefore, uciList, 8)
+                        setBestLineSteps(steps)
+                        if (steps.length) { setBestLineIdx(0); setBestLinePreview({ fen: steps[0].fenAfter, from: steps[0].from, to: steps[0].to }) }
+
+                        // Fetch shallow evals for each preview step (cached in steps)
+                        try {
+                          const DEPTH_PREVIEW = 12
+                          const promises = steps.map((s, i) => {
+                            const fenBefore = s.fenBefore || (i === 0 ? current.fenBefore : (steps[i - 1]?.fenAfter))
+                            return analyzePosition(fenBefore, s.uci, DEPTH_PREVIEW, 1)
+                              .then(res => ({ i, evalBefore: res.data.eval_before, evalAfter: res.data.eval_after }))
+                              .catch(() => null)
+                          })
+                          const results = await Promise.all(promises)
+                          setBestLineSteps(prev => prev.map((p, idx) => {
+                            const r = results.find(r => r && r.i === idx)
+                            return r ? { ...p, evalBefore: r.evalBefore ?? p.evalBefore, evalAfter: r.evalAfter ?? p.evalAfter } : p
+                          }))
+                        } catch (e) {
+                          // ignore
+                        }
+                      }}
+                      className="px-3 py-1 text-xs rounded bg-gray-800 text-gray-200"
+                    >Preview engine best line</button>
+                    <button
+                      onClick={() => { if (bestLineIdx > 0) { const ni = bestLineIdx - 1; setBestLineIdx(ni); const s = bestLineSteps[ni]; setBestLinePreview({ fen: s.fenAfter, from: s.from, to: s.to }) } }}
+                      disabled={!bestLineSteps?.length || bestLineIdx === null}
+                      className="px-2 py-1 text-xs rounded bg-gray-800 disabled:opacity-40"
+                    >‹</button>
+                    <div className="text-sm font-mono text-gray-200">
+                      {bestLineSteps?.length ? (bestLineSteps[bestLineIdx]?.san ?? '') : ''}
+                    </div>
+                    <button
+                      onClick={() => { if (!bestLineSteps?.length) return; if (bestLineIdx === null) { setBestLineIdx(0); setBestLinePreview({ fen: bestLineSteps[0].fenAfter, from: bestLineSteps[0].from, to: bestLineSteps[0].to }) } else if (bestLineIdx < bestLineSteps.length - 1) { const ni = bestLineIdx + 1; setBestLineIdx(ni); const s = bestLineSteps[ni]; setBestLinePreview({ fen: s.fenAfter, from: s.from, to: s.to }) } }}
+                      disabled={!bestLineSteps?.length}
+                      className="px-2 py-1 text-xs rounded bg-gray-800 disabled:opacity-40"
+                    >›</button>
+                    <button onClick={() => { setBestLinePreview(null); setBestLineIdx(null); setBestLineSteps([]) }} className="px-2 py-1 text-xs rounded bg-gray-800">Stop</button>
+                  </div>
+                )}
+
+                {explanations[current.originalIdx]?.deviationBestLineUci?.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        const uciList = explanations[current.originalIdx].deviationBestLineUci || []
+                        const startFen = explanations[current.originalIdx].fenAfter || current.fenBefore
+                        const steps = decodeLine(startFen, uciList, 8)
+                        setDevLineSteps(steps)
+                        if (steps.length) { setDevLineIdx(0); setBestLinePreview({ fen: steps[0].fenAfter, from: steps[0].from, to: steps[0].to }) }
+
+                        try {
+                          const DEPTH_PREVIEW = 12
+                          const promises = steps.map((s, i) => {
+                            const fenBefore = s.fenBefore || (i === 0 ? startFen : (steps[i - 1]?.fenAfter))
+                            return analyzePosition(fenBefore, s.uci, DEPTH_PREVIEW, 1)
+                              .then(res => ({ i, evalBefore: res.data.eval_before, evalAfter: res.data.eval_after }))
+                              .catch(() => null)
+                          })
+                          const results = await Promise.all(promises)
+                          setDevLineSteps(prev => prev.map((p, idx) => {
+                            const r = results.find(r => r && r.i === idx)
+                            return r ? { ...p, evalBefore: r.evalBefore ?? p.evalBefore, evalAfter: r.evalAfter ?? p.evalAfter } : p
+                          }))
+                        } catch (e) {
+                          // ignore
+                        }
+                      }}
+                      className="px-3 py-1 text-xs rounded bg-gray-800 text-gray-200"
+                    >Preview continuation after played move</button>
+                    <button
+                      onClick={() => { if (devLineIdx > 0) { const ni = devLineIdx - 1; setDevLineIdx(ni); const s = devLineSteps[ni]; setBestLinePreview({ fen: s.fenAfter, from: s.from, to: s.to }) } }}
+                      disabled={!devLineSteps?.length || devLineIdx === null}
+                      className="px-2 py-1 text-xs rounded bg-gray-800 disabled:opacity-40"
+                    >‹</button>
+                    <div className="text-sm font-mono text-gray-200">
+                      {devLineSteps?.length ? (devLineSteps[devLineIdx]?.san ?? '') : ''}
+                    </div>
+                    <button
+                      onClick={() => { if (!devLineSteps?.length) return; if (devLineIdx === null) { setDevLineIdx(0); setBestLinePreview({ fen: devLineSteps[0].fenAfter, from: devLineSteps[0].from, to: devLineSteps[0].to }) } else if (devLineIdx < devLineSteps.length - 1) { const ni = devLineIdx + 1; setDevLineIdx(ni); const s = devLineSteps[ni]; setBestLinePreview({ fen: s.fenAfter, from: s.from, to: s.to }) } }}
+                      disabled={!devLineSteps?.length}
+                      className="px-2 py-1 text-xs rounded bg-gray-800 disabled:opacity-40"
+                    >›</button>
+                    <button onClick={() => { setBestLinePreview(null); setDevLineIdx(null); setDevLineSteps([]) }} className="px-2 py-1 text-xs rounded bg-gray-800">Stop</button>
+                  </div>
+                )}
               </div>
 
               {/* Move number label */}
@@ -540,6 +818,63 @@ export default function Practice() {
                       </p>
                     )}
                   </div>
+
+                  {/* Explain / AI coaching (also available in Correct view) */}
+                  <div className="mt-3">
+                    {explanations[current.originalIdx]?.text ? (
+                      <div className="rounded-lg border border-purple-800/40 bg-purple-950/20 p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-purple-400 mb-2">
+                          🎓 AI Explanation (depth {explanations[current.originalIdx].depth})
+                        </div>
+
+                        {/* Engine lines (best continuation and deviation continuation) */}
+                        {(explanations[current.originalIdx].bestLineSan?.length > 0 || explanations[current.originalIdx].deviationBestLineSan?.length > 0) && (
+                          <div className="rounded-lg border border-gray-700/40 bg-gray-950/60 p-3 mb-3">
+                            {explanations[current.originalIdx].bestLineSan?.length > 0 && (
+                              <div className="mb-2">
+                                <div className="text-[11px] text-gray-500 uppercase font-semibold">Engine best line (from this position)</div>
+                                <div className="text-sm font-mono text-gray-200 mt-1">
+                                  {explanations[current.originalIdx].bestLineSan.join(' → ')}
+                                </div>
+                              </div>
+                            )}
+                            {explanations[current.originalIdx].deviationBestLineSan?.length > 0 && (
+                              <div>
+                                <div className="text-[11px] text-gray-500 uppercase font-semibold">Best continuation after the played move</div>
+                                <div className="text-sm font-mono text-gray-200 mt-1">
+                                  {explanations[current.originalIdx].deviationBestLineSan.join(' → ')}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="prose prose-invert prose-sm max-w-none text-gray-300 prose-strong:text-gray-200 prose-p:my-1">
+                          <ReactMarkdown>{explanations[current.originalIdx].text}</ReactMarkdown>
+                        </div>
+                        <button
+                          onClick={() => { setExplanations(prev => { const n = { ...prev }; delete n[current.originalIdx]; return n }) }}
+                          className="mt-2 text-[10px] text-gray-600 hover:text-gray-400 transition-colors"
+                        >
+                          ↺ Clear explanation
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <button
+                            onClick={handleExplain}
+                            disabled={explanations[current.originalIdx]?.loading}
+                            className="w-full py-2 text-sm font-semibold rounded-xl bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white transition-colors"
+                          >
+                            {explanations[current.originalIdx]?.loading ? 'Analyzing…' : 'Explain why this was a mistake'}
+                          </button>
+                        </div>
+                        {explanations[current.originalIdx]?.error && <p className="text-xs text-red-400 mt-2">{explanations[current.originalIdx].error}</p>}
+                        <p className="text-[11px] text-gray-500 mt-2">Explanations are generated on-demand using a deeper engine search and an AI; may take a few seconds.</p>
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -565,6 +900,63 @@ export default function Practice() {
                       <p className="text-xs text-gray-500">
                         The played move lost <span className="text-red-400">{Math.round(current.cp_loss)} cp</span>.
                       </p>
+                    )}
+                  </div>
+
+                  {/* Explain / AI coaching */}
+                  <div className="mt-3">
+                    {explanations[current.originalIdx]?.text ? (
+                      <div className="rounded-lg border border-purple-800/40 bg-purple-950/20 p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-purple-400 mb-2">
+                          🎓 AI Explanation (depth {explanations[current.originalIdx].depth})
+                        </div>
+
+                        {/* Engine lines (best continuation and deviation continuation) */}
+                        {(explanations[current.originalIdx].bestLineSan?.length > 0 || explanations[current.originalIdx].deviationBestLineSan?.length > 0) && (
+                          <div className="rounded-lg border border-gray-700/40 bg-gray-950/60 p-3 mb-3">
+                            {explanations[current.originalIdx].bestLineSan?.length > 0 && (
+                              <div className="mb-2">
+                                <div className="text-[11px] text-gray-500 uppercase font-semibold">Engine best line (from this position)</div>
+                                <div className="text-sm font-mono text-gray-200 mt-1">
+                                  {explanations[current.originalIdx].bestLineSan.join(' → ')}
+                                </div>
+                              </div>
+                            )}
+                            {explanations[current.originalIdx].deviationBestLineSan?.length > 0 && (
+                              <div>
+                                <div className="text-[11px] text-gray-500 uppercase font-semibold">Best continuation after the played move</div>
+                                <div className="text-sm font-mono text-gray-200 mt-1">
+                                  {explanations[current.originalIdx].deviationBestLineSan.join(' → ')}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="prose prose-invert prose-sm max-w-none text-gray-300 prose-strong:text-gray-200 prose-p:my-1">
+                          <ReactMarkdown>{explanations[current.originalIdx].text}</ReactMarkdown>
+                        </div>
+                        <button
+                          onClick={() => setExplanations(prev => { const n = { ...prev }; delete n[current.originalIdx]; return n })}
+                          className="mt-2 text-[10px] text-gray-600 hover:text-gray-400 transition-colors"
+                        >
+                          ↺ Clear explanation
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <button
+                            onClick={handleExplain}
+                            disabled={explanations[current.originalIdx]?.loading}
+                            className="w-full py-2 text-sm font-semibold rounded-xl bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white transition-colors"
+                          >
+                            {explanations[current.originalIdx]?.loading ? 'Analyzing…' : 'Explain why this was a mistake'}
+                          </button>
+                        </div>
+                        {explanations[current.originalIdx]?.error && <p className="text-xs text-red-400 mt-2">{explanations[current.originalIdx].error}</p>}
+                        <p className="text-[11px] text-gray-500 mt-2">Explanations are generated on-demand using a deeper engine search and an AI; may take a few seconds.</p>
+                      </>
                     )}
                   </div>
                 </div>

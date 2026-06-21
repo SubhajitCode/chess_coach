@@ -4,8 +4,7 @@ export default function EvalBar({ evalScore }) {
 
   let whitePercent = 50
   if (evalScore !== null && evalScore !== undefined) {
-    // Map cp to percentage: ±500cp = near 100%/0%
-    // Use sigmoid-like mapping
+    // Map cp to percentage: ±1000cp = near 100%/0%
     const normalized = clamp(evalScore, -1000, 1000)
     whitePercent = 50 + (normalized / 1000) * 45
     whitePercent = clamp(whitePercent, 2, 98)
@@ -23,7 +22,8 @@ export default function EvalBar({ evalScore }) {
   }
 
   return (
-    <div className="flex flex-col items-center gap-1.5 h-[520px]">
+    // h-full so EvalBar stretches to parent container height
+    <div className="flex flex-col items-center gap-1.5 h-full">
       <div className="text-xs text-gray-300 font-mono font-semibold">{displayEval()}</div>
       <div className="w-5 flex-1 rounded-full overflow-hidden border border-gray-600 flex flex-col">
         {/* Black portion (top) */}
