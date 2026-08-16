@@ -1,7 +1,20 @@
 from fastapi import APIRouter, HTTPException
-from models import CoachRequest, PerMoveCoachRequest, DeviationCoachRequest
-from services.llm_service import COACHING_CACHE_VERSION, get_coaching, get_per_move_coaching, get_deviation_coaching
-from services.db import get_move_coaching, get_player_profile, save_move_coaching
+from models import CoachRequest, PerMoveCoachRequest, DeviationCoachRequest, GameOverviewRequest
+from services.llm_service import (
+    COACHING_CACHE_VERSION,
+    GAME_OVERVIEW_CACHE_VERSION,
+    get_coaching,
+    get_per_move_coaching,
+    get_deviation_coaching,
+    get_game_overview,
+)
+from services.db import (
+    get_move_coaching,
+    get_player_profile,
+    save_move_coaching,
+    get_game_overview as get_cached_game_overview,
+    save_game_overview,
+)
 
 router = APIRouter()
 
@@ -95,6 +108,45 @@ async def get_cached_per_move_coaching(pgn_hash: str):
     return {
         "coaching": coaching or [],
         "cached": coaching is not None,
+        "profile_used": _public_coaching_profile(profile),
+    }
+
+
+@router.post("/coach/overview")
+async def get_game_overview_feedback(req: GameOverviewRequest):
+    """Generate or retrieve cached game-level overview + key moments."""
+    if not req.analysis:
+        raise HTTPException(status_code=400, detail="Analysis data is required")
+    if req.player_color not in ("white", "black"):
+        raise HTTPException(status_code=400, detail="player_color must be 'white' or 'black'")
+
+    profile = _get_active_coaching_profile()
+    public_profile = _public_coaching_profile(profile)
+    cached = get_cached_game_overview(req.pgn_hash, version=GAME_OVERVIEW_CACHE_VERSION)
+    if cached:
+        return {"overview": cached, "cached": True, "profile_used": public_profile}
+
+    try:
+        overview = await get_game_overview(
+            analysis=req.analysis,
+            player_color=req.player_color,
+            username=req.username or profile.get("username"),
+            profile=profile,
+        )
+        save_game_overview(req.pgn_hash, overview, version=GAME_OVERVIEW_CACHE_VERSION)
+        return {"overview": overview, "cached": False, "profile_used": public_profile}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Game overview failed: {str(e)}")
+
+
+@router.get("/coach/overview/{pgn_hash}")
+async def get_cached_game_overview_feedback(pgn_hash: str):
+    """Retrieve previously generated game-level overview from DB."""
+    overview = get_cached_game_overview(pgn_hash, version=GAME_OVERVIEW_CACHE_VERSION)
+    profile = _get_active_coaching_profile()
+    return {
+        "overview": overview,
+        "cached": overview is not None,
         "profile_used": _public_coaching_profile(profile),
     }
 

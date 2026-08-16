@@ -12,6 +12,7 @@ DEFAULT_MODEL_BY_PROVIDER = {
     "google_ai_studio": "gemini-3-flash-preview",
 }
 COACHING_CACHE_VERSION = 5
+GAME_OVERVIEW_CACHE_VERSION = 1
 PER_MOVE_CHUNK_SIZE = 12
 PER_MOVE_RETRY_CHUNK_SIZE = 4
 PER_MOVE_CONTEXT_OVERLAP = 2
@@ -394,6 +395,187 @@ async def get_coaching(
         _preview_text(content),
     )
     return content
+
+
+def _build_overview_key_moment_facts(moves: list[dict]) -> list[dict]:
+    candidates = []
+    for idx, move in enumerate(moves):
+        classification = move.get("classification")
+        cp_loss = float(move.get("cp_loss") or 0)
+        is_critical = classification in ("blunder", "mistake") or cp_loss >= 80
+        is_tactical = bool(move.get("move_is_checkmate") or move.get("move_is_capture") or move.get("move_is_check"))
+        if is_critical or is_tactical:
+            candidates.append({
+                "index": idx,
+                "score": cp_loss + (80 if classification == "blunder" else 40 if classification == "mistake" else 0),
+                "move": move,
+            })
+
+    top = sorted(candidates, key=lambda item: item["score"], reverse=True)[:8]
+    return sorted(top, key=lambda item: item["index"])
+
+
+def _build_game_overview_prompt(
+    analysis: dict,
+    player_color: str,
+    username: str | None = None,
+    profile: dict | None = None,
+) -> str:
+    white = analysis.get("white", "White")
+    black = analysis.get("black", "Black")
+    result = analysis.get("result", "*")
+    opening = analysis.get("opening") or "Unknown opening"
+    time_control = analysis.get("time_control") or "Unknown"
+    summary = analysis.get("summary", {})
+    moves = analysis.get("moves", [])
+    player_name = username or (white if player_color == "white" else black)
+    profile_context = _build_profile_context_brief(profile, time_control)
+    key_moments = _build_overview_key_moment_facts(moves)
+
+    moment_lines = []
+    for item in key_moments:
+        move = item["move"]
+        idx = item["index"]
+        cp_loss = float(move.get("cp_loss") or 0)
+        line = (
+            f"- idx={idx} move={move.get('move_number', '?')} {move.get('color', '?')} {move.get('move_san', '?')} "
+            f"class={move.get('classification', 'good')} cp_loss={cp_loss:.0f}"
+        )
+        if move.get("move_summary"):
+            line += f" played={move.get('move_summary')}"
+        if move.get("best_move_san"):
+            line += f" best={move.get('best_move_san')}"
+        if move.get("best_move_summary"):
+            line += f" best_fact={move.get('best_move_summary')}"
+        if move.get("reply_move_san"):
+            line += f" punishment={move.get('reply_move_san')}"
+        moment_lines.append(line)
+
+    if not moment_lines:
+        moment_lines.append("- no major tactical or strategic swings were detected")
+
+    return f"""You are an expert chess coach writing a concise game-level overview.
+
+Return ONLY a valid JSON object with this exact schema:
+{{
+  "overview": "2-3 sentence summary of how the game unfolded",
+  "key_moments": [
+    "chronological step 1",
+    "chronological step 2"
+  ]
+}}
+
+Rules:
+- No markdown, no extra keys, no prose before/after JSON.
+- `overview` must be concise and factual.
+- `key_moments` must be chronological, concise, and include both sides' important moves when relevant.
+- Keep key moments to 4-8 items.
+- Use move facts only; do not invent captures, piece locations, or tactical claims unsupported by facts.
+- Tie emphasis to profile context only when supported by game facts.
+
+GAME:
+- White: {white}
+- Black: {black}
+- Player focus: {player_name} as {player_color}
+- Result: {result}
+- Opening: {opening}
+- Time control: {time_control}
+- Player stats: accuracy {summary.get('accuracy', 0)}%, blunders {summary.get('blunders', 0)}, mistakes {summary.get('mistakes', 0)}, inaccuracies {summary.get('inaccuracies', 0)}
+- Profile context: {profile_context}
+
+KEY MOMENT FACTS:
+{chr(10).join(moment_lines)}
+"""
+
+
+def _extract_json_object(raw: str) -> dict:
+    text = raw.strip()
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            stripped = part.strip()
+            if stripped.startswith("json"):
+                stripped = stripped[4:].strip()
+            if stripped.startswith("{"):
+                text = stripped
+                break
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        parsed = json.loads(text[start:end + 1])
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError(f"Could not parse JSON object from LLM response. Raw (first 300 chars): {raw[:300]}")
+
+
+def _normalise_game_overview_payload(payload: dict) -> dict:
+    overview = " ".join(str(payload.get("overview", "")).split()).strip()
+    raw_key_moments = payload.get("key_moments")
+    if isinstance(raw_key_moments, list):
+        key_moments = [" ".join(str(item).split()).strip() for item in raw_key_moments]
+        key_moments = [item for item in key_moments if item]
+    else:
+        key_moments = []
+
+    if not overview:
+        raise ValueError("LLM did not return overview text")
+    if not key_moments:
+        raise ValueError("LLM did not return key moments")
+
+    return {
+        "overview": overview,
+        "key_moments": key_moments[:8],
+    }
+
+
+async def get_game_overview(
+    analysis: dict,
+    player_color: str,
+    username: str | None = None,
+    profile: dict | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+) -> dict:
+    config = _get_llm_config(api_key=api_key, model=model)
+    client = _get_client(config)
+    prompt = _build_game_overview_prompt(analysis, player_color, username, profile)
+    logger.info(
+        "llm game-overview request provider=%s model=%s player_color=%s prompt_preview=%s",
+        config.provider,
+        config.model,
+        player_color,
+        _preview_text(prompt),
+    )
+    response = await client.chat.completions.create(
+        model=config.model,
+        messages=[
+            {
+                "role": "system",
+                "content": "You generate strict JSON only. Do not output markdown or explanatory prose.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=700,
+        temperature=0.3,
+    )
+    raw = response.choices[0].message.content or ""
+    payload = _extract_json_object(raw)
+    normalized = _normalise_game_overview_payload(payload)
+    logger.info(
+        "llm game-overview response provider=%s model=%s key_moments=%s preview=%s",
+        config.provider,
+        config.model,
+        len(normalized["key_moments"]),
+        _preview_text(normalized["overview"]),
+    )
+    return normalized
 
 
 def _build_game_brief(

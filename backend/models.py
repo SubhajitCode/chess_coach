@@ -29,6 +29,18 @@ class PerMoveCoachRequest(BaseModel):
     username: Optional[str] = None
 
 
+class GameOverviewRequest(BaseModel):
+    pgn_hash: str
+    analysis: dict
+    player_color: str
+    username: Optional[str] = None
+
+
+class GameOverviewPayload(BaseModel):
+    overview: str
+    key_moments: list[str] = Field(default_factory=list)
+
+
 class MoveAnalysis(BaseModel):
     move_number: int
     color: str

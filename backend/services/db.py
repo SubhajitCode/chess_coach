@@ -68,6 +68,14 @@ def init_db() -> None:
             )
         conn.execute("UPDATE move_coaching SET version = 1 WHERE version IS NULL")
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS game_overview_cache (
+                pgn_hash      TEXT PRIMARY KEY,
+                overview_json TEXT NOT NULL,
+                version       INTEGER NOT NULL DEFAULT 1,
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS player_profile (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 username TEXT,
@@ -192,6 +200,28 @@ def get_move_coaching(pgn_hash: str, version: int = 1) -> list[dict] | None:
     if not rows:
         return None
     return [{"move_index": r["move_index"], "feedback": r["feedback"]} for r in rows]
+
+
+def save_game_overview(pgn_hash: str, overview_payload: dict[str, Any], version: int = 1) -> None:
+    with _db() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO game_overview_cache (pgn_hash, overview_json, version)
+            VALUES (?, ?, ?)
+            """,
+            (pgn_hash, json.dumps(overview_payload), version),
+        )
+
+
+def get_game_overview(pgn_hash: str, version: int = 1) -> dict[str, Any] | None:
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT overview_json FROM game_overview_cache WHERE pgn_hash = ? AND version = ?",
+            (pgn_hash, version),
+        ).fetchone()
+    if row is None:
+        return None
+    return json.loads(row["overview_json"])
 
 
 def get_player_profile() -> dict[str, Any] | None:

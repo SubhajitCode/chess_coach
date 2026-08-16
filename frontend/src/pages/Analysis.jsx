@@ -2,7 +2,15 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Chessboard } from 'react-chessboard'
 import { Chess } from 'chess.js'
-import { analyzeGameStream, getPerMoveCoaching, getCachedPerMoveCoaching, getCachedAnalysis, computePgnHash, analyzePosition } from '../api/chess'
+import {
+  analyzeGameStream,
+  getPerMoveCoaching,
+  getCachedPerMoveCoaching,
+  getCachedAnalysis,
+  getGameOverview,
+  computePgnHash,
+  analyzePosition,
+} from '../api/chess'
 import MoveTable from '../components/MoveTable'
 import EvalBar from '../components/EvalBar'
 import EvalChart from '../components/EvalChart'
@@ -129,6 +137,9 @@ export default function Analysis() {
   const [coachProfile, setCoachProfile] = useState(null)
   const [coachLoading, setCoachLoading] = useState(false)
   const [coachError, setCoachError] = useState(null)
+  const [gameOverview, setGameOverview] = useState(null) // { overview, key_moments[] }
+  const [overviewLoading, setOverviewLoading] = useState(false)
+  const [overviewError, setOverviewError] = useState(null)
   const [pgnHash, setPgnHash] = useState(null)
 
   const [depth, setDepth] = useState(18)
@@ -242,6 +253,15 @@ export default function Analysis() {
         const pgnHeaders = extractPgnHeaders(game.pgn)
         const openingFromPgn = pgnHeaders.Opening || pgnHeaders.ECOUrl || null
         if (openingFromPgn) setGameMeta(prev => ({ ...(prev || {}), opening: openingFromPgn }))
+        const analysisForOverview = {
+          opening: openingFromPgn || game.opening || null,
+          time_control: game.time_control || null,
+          white: game.white,
+          black: game.black,
+          result: game.result,
+          moves: cached.moves || [],
+          summary: cachedSummary || null,
+        }
 
         setFromCache(true)
         setTrackLatestState(false)
@@ -261,12 +281,41 @@ export default function Analysis() {
             switchRightTab('coach')
           }
         }
+
+        if (!cancelled && (cached.moves || []).length > 0) {
+          setOverviewLoading(true)
+          setOverviewError(null)
+          try {
+            const overviewRes = await getGameOverview(hash, analysisForOverview, playerColor, username)
+            if (!cancelled) {
+              setGameOverview(overviewRes?.data?.overview || null)
+            }
+          } catch (err) {
+            if (!cancelled) {
+              const detail = err?.response?.data?.detail || err?.message || 'Game overview failed'
+              setOverviewError(detail)
+            }
+          } finally {
+            if (!cancelled) setOverviewLoading(false)
+          }
+        }
       } catch {
         // Keep the page usable if cache bootstrap fails.
       }
     })()
     return () => { cancelled = true }
-  }, [game?.pgn, playerColor, setTrackLatestState, switchRightTab])
+  }, [
+    game?.black,
+    game?.opening,
+    game?.pgn,
+    game?.result,
+    game?.time_control,
+    game?.white,
+    playerColor,
+    setTrackLatestState,
+    switchRightTab,
+    username,
+  ])
 
   const parsedGameMoves = useMemo(() => parsePgnMoves(game?.pgn), [game?.pgn])
   const boardMoves = streamedMoves.length > 0 ? streamedMoves : parsedGameMoves
@@ -367,6 +416,9 @@ export default function Analysis() {
     setCoachProfile(null)
     setCoachLoading(false)
     setCoachError(null)
+    setGameOverview(null)
+    setOverviewLoading(false)
+    setOverviewError(null)
     setAnalyzedCount(0)
     setTrackLatestState(true)
     setCurrentIndex(-1)
@@ -421,20 +473,37 @@ export default function Analysis() {
             summary: summ,
           }
           setCoachLoading(true)
-          try {
-            const res = await getPerMoveCoaching(pgnHash, analysis, playerColor, username)
+          setOverviewLoading(true)
+          setOverviewError(null)
+          const [perMoveResult, overviewResult] = await Promise.allSettled([
+            getPerMoveCoaching(pgnHash, analysis, playerColor, username),
+            getGameOverview(pgnHash, analysis, playerColor, username),
+          ])
+
+          if (perMoveResult.status === 'fulfilled') {
             const map = {}
-            res.data.coaching.forEach(c => { map[c.move_index] = c.feedback })
+            perMoveResult.value?.data?.coaching?.forEach(c => { map[c.move_index] = c.feedback })
             setMoveCoaching(map)
-            setCoachProfile(res.data.profile_used || null)
+            setCoachProfile(perMoveResult.value?.data?.profile_used || null)
             setCoachError(null)
             switchRightTab('coach')
-          } catch (err) {
+          } else {
+            const err = perMoveResult.reason
             const detail = err?.response?.data?.detail || err?.message || 'Coaching failed'
             setCoachError(detail)
-          } finally {
-            setCoachLoading(false)
           }
+
+          if (overviewResult.status === 'fulfilled') {
+            setGameOverview(overviewResult.value?.data?.overview || null)
+            setOverviewError(null)
+          } else {
+            const err = overviewResult.reason
+            const detail = err?.response?.data?.detail || err?.message || 'Game overview failed'
+            setOverviewError(detail)
+          }
+
+          setCoachLoading(false)
+          setOverviewLoading(false)
         }
       },
       onError: (msg) => {
@@ -489,6 +558,21 @@ export default function Analysis() {
     moves: streamedMoves,
     summary,
   } : null
+
+  const handleRequestOverview = async () => {
+    if (!fullAnalysis || !pgnHash) return
+    setOverviewLoading(true)
+    setOverviewError(null)
+    try {
+      const res = await getGameOverview(pgnHash, fullAnalysis, playerColor, username)
+      setGameOverview(res?.data?.overview || null)
+    } catch (err) {
+      const detail = err?.response?.data?.detail || err?.message || 'Game overview failed'
+      setOverviewError(detail)
+    } finally {
+      setOverviewLoading(false)
+    }
+  }
 
   // Manually re-request per-move coaching (e.g. after cache load with no coaching yet)
   const handleRequestCoaching = async () => {
@@ -898,6 +982,16 @@ export default function Analysis() {
                     </div>
                   )}
 
+                  {/* AI game overview */}
+                  {(streamedMoves.length > 0 || overviewLoading || overviewError || gameOverview) && (
+                    <GameOverviewPanel
+                      overview={gameOverview}
+                      loading={overviewLoading}
+                      error={overviewError}
+                      onRetry={handleRequestOverview}
+                    />
+                  )}
+
                   {/* Summary stats */}
                   {(summary || (analyzing && streamedMoves.length > 0)) && (
                     <SummaryPanel
@@ -1022,6 +1116,58 @@ function RightTabButton({ active, onClick, badge, children }) {
     </button>
   )
 }
+
+function GameOverviewPanel({ overview, loading, error, onRetry }) {
+  const keyMoments = overview?.key_moments || []
+  const hasOverview = !!overview?.overview
+
+  return (
+    <div className="bg-gray-900 rounded-xl border border-gray-700 p-4">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">AI Game Overview</h3>
+        {loading && <span className="text-xs text-blue-400 animate-pulse">Generating…</span>}
+      </div>
+
+      {error && (
+        <div className="mb-3 p-3 bg-red-900/30 border border-red-700 rounded-lg">
+          <p className="text-red-400 text-xs font-medium mb-1">Could not generate overview</p>
+          <p className="text-red-300 text-xs opacity-90">{error}</p>
+          <button
+            onClick={onRetry}
+            className="mt-2 px-3 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {!error && loading && !hasOverview && (
+        <div className="flex flex-col gap-2 animate-pulse">
+          <div className="h-3 bg-gray-700 rounded w-full" />
+          <div className="h-3 bg-gray-700 rounded w-5/6" />
+          <div className="h-3 bg-gray-700 rounded w-4/6" />
+        </div>
+      )}
+
+      {hasOverview && (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-gray-200 leading-relaxed">{overview.overview}</p>
+          {keyMoments.length > 0 && (
+            <div className="rounded-lg border border-gray-700 bg-gray-950/40 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">Step by step</div>
+              <ol className="list-decimal list-inside space-y-1.5 text-sm text-gray-300">
+                {keyMoments.map((item, idx) => (
+                  <li key={`${idx}-${item.slice(0, 24)}`} className="leading-relaxed">{item}</li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SummaryPanel({ summary, streamedMoves, playerColor, analyzing, opening }) {
   // Live-compute stats from streamed moves if summary not yet received
   const playerMoves = streamedMoves.filter(m => m.color === playerColor)

@@ -6,6 +6,7 @@ A full-stack AI-powered chess coaching app. Import games from Chess.com or Liche
 - 📥 Fetch games from **Chess.com** or **Lichess**
 - 🔍 Move-by-move analysis with **Stockfish 18** (local)
 - 📊 Evaluation bar, eval chart, and move classifications (best/excellent/good/inaccuracy/mistake/blunder)
+- 🧠 AI game overview at the top of analysis with step-by-step key moments
 - 🎓 AI coaching feedback via **OpenRouter** or **Google AI Studio**
 - ⌨️ Keyboard navigation (← → arrow keys)
 

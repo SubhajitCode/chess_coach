@@ -17,6 +17,12 @@ export const getPerMoveCoaching = (pgnHash, analysis, playerColor, username = nu
 export const getCachedPerMoveCoaching = (pgnHash) =>
   api.get(`/coach/per-move/${pgnHash}`).then((res) => res.data)
 
+export const getGameOverview = (pgnHash, analysis, playerColor, username = null) =>
+  api.post('/coach/overview', { pgn_hash: pgnHash, analysis, player_color: playerColor, username })
+
+export const getCachedGameOverview = (pgnHash) =>
+  api.get(`/coach/overview/${pgnHash}`).then((res) => res.data)
+
 export const getCachedAnalysis = (pgnHash) =>
   api.get(`/analysis/cached/${pgnHash}`).then((res) => res.data.cached)
 
