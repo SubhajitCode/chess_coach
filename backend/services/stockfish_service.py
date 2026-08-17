@@ -161,6 +161,232 @@ def _move_fact_fields(board: chess.Board, move: chess.Move | None, prefix: str) 
     }
 
 
+PIECE_VALUES = {
+    chess.PAWN: 100,
+    chess.KNIGHT: 300,
+    chess.BISHOP: 315,
+    chess.ROOK: 500,
+    chess.QUEEN: 900,
+    chess.KING: 10000,
+}
+
+
+def _detect_hanging_pieces(board: chess.Board, color: chess.Color) -> list[str]:
+    """Detect undefended or underdefended pieces of `color` under enemy attack."""
+    hanging = []
+    enemy_color = not color
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece is None or piece.color != color or piece.piece_type == chess.KING:
+            continue
+
+        enemy_attackers = list(board.attackers(enemy_color, sq))
+        if not enemy_attackers:
+            continue
+
+        friendly_defenders = list(board.attackers(color, sq))
+        piece_val = PIECE_VALUES.get(piece.piece_type, 100)
+
+        # 1. No defenders at all
+        if not friendly_defenders:
+            sq_name = chess.square_name(sq)
+            p_name = _piece_name(piece)
+            hanging.append(f"hanging:{p_name}_{sq_name}")
+            continue
+
+        # 2. Underdefended: Attacked by a piece of strictly lower value (e.g. pawn attacks queen/rook/bishop)
+        attacker_pieces = [board.piece_at(a_sq) for a_sq in enemy_attackers if board.piece_at(a_sq)]
+        if attacker_pieces:
+            lowest_enemy_val = min(PIECE_VALUES.get(p.piece_type, 1000) for p in attacker_pieces)
+            if lowest_enemy_val < piece_val:
+                sq_name = chess.square_name(sq)
+                p_name = _piece_name(piece)
+                hanging.append(f"underdefended:{p_name}_{sq_name}")
+
+    return hanging
+
+
+def _detect_pins(board: chess.Board, color: chess.Color) -> list[str]:
+    """Detect absolute pins (to King) and major relative pins (to Queen) for `color`."""
+    pins = []
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece is None or piece.color != color or piece.piece_type == chess.KING:
+            continue
+
+        # Check absolute pin (to King)
+        if board.is_pinned(color, sq):
+            p_name = _piece_name(piece)
+            sq_name = chess.square_name(sq)
+            pins.append(f"pin:absolute:{p_name}_{sq_name}")
+            continue
+
+        # Check relative pin to Queen if piece is not Queen
+        if piece.piece_type != chess.QUEEN:
+            queen_squares = board.pieces(chess.QUEEN, color)
+            for q_sq in queen_squares:
+                enemy_color = not color
+                for enemy_slider_sq in board.attackers(enemy_color, sq):
+                    slider = board.piece_at(enemy_slider_sq)
+                    if slider and slider.piece_type in (chess.BISHOP, chess.ROOK, chess.QUEEN):
+                        dir_mask = chess.ray(enemy_slider_sq, sq)
+                        if (chess.BB_SQUARES[q_sq] & dir_mask) and bool(chess.BB_SQUARES[sq] & chess.between(enemy_slider_sq, q_sq)):
+                            p_name = _piece_name(piece)
+                            sq_name = chess.square_name(sq)
+                            pins.append(f"pin:relative:{p_name}_{sq_name}_to_queen")
+                            break
+    return pins
+
+
+def _detect_forks(board_after: chess.Board, move: chess.Move) -> list[str]:
+    """Detect if the moved piece is executing a fork / double attack."""
+    moved_piece = board_after.piece_at(move.to_square)
+    if not moved_piece:
+        return []
+
+    color = moved_piece.color
+    enemy_color = not color
+    attacked_squares = board_after.attacks(move.to_square)
+
+    valuable_targets = []
+    for sq in attacked_squares:
+        target = board_after.piece_at(sq)
+        if target and target.color == enemy_color:
+            if target.piece_type in (chess.KING, chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT):
+                valuable_targets.append(chess.square_name(sq))
+
+    if len(valuable_targets) >= 2:
+        p_name = _piece_name(moved_piece)
+        targets_str = "_".join(valuable_targets[:3])
+        return [f"fork:{p_name}_{chess.square_name(move.to_square)}_attacks_{targets_str}"]
+    return []
+
+
+def _detect_skewers(board_after: chess.Board, move: chess.Move) -> list[str]:
+    """Detect if the moved sliding piece is executing a skewer."""
+    moved_piece = board_after.piece_at(move.to_square)
+    if not moved_piece or moved_piece.piece_type not in (chess.BISHOP, chess.ROOK, chess.QUEEN):
+        return []
+
+    color = moved_piece.color
+    enemy_color = not color
+    skewers = []
+
+    for target_sq in board_after.attacks(move.to_square):
+        target = board_after.piece_at(target_sq)
+        if target and target.color == enemy_color and target.piece_type in (chess.KING, chess.QUEEN, chess.ROOK):
+            ray = chess.ray(move.to_square, target_sq)
+            behind_squares = [sq for sq in chess.SQUARES if (chess.BB_SQUARES[sq] & ray) and bool(chess.BB_SQUARES[target_sq] & chess.between(move.to_square, sq))]
+            for b_sq in behind_squares:
+                behind_piece = board_after.piece_at(b_sq)
+                if behind_piece:
+                    if behind_piece.color == enemy_color and PIECE_VALUES.get(behind_piece.piece_type, 0) >= 300:
+                        skewers.append(f"skewer:{_piece_name(moved_piece)}_{chess.square_name(move.to_square)}")
+                    break
+    return skewers
+
+
+def _detect_back_rank_weakness(board: chess.Board, color: chess.Color) -> list[str]:
+    """Detect if the king is trapped on the back rank without luft."""
+    king_sq = board.king(color)
+    if king_sq is None:
+        return []
+
+    rank = chess.square_rank(king_sq)
+    back_rank = 0 if color == chess.WHITE else 7
+    if rank != back_rank:
+        return []
+
+    enemy_color = not color
+    has_enemy_major = bool(
+        board.pieces(chess.ROOK, enemy_color) or board.pieces(chess.QUEEN, enemy_color)
+    )
+    if not has_enemy_major:
+        return []
+
+    escape_rank = 1 if color == chess.WHITE else 6
+    king_file = chess.square_file(king_sq)
+
+    has_luft = False
+    for f in range(max(0, king_file - 1), min(7, king_file + 1) + 1):
+        front_sq = chess.square(f, escape_rank)
+        piece_on_front = board.piece_at(front_sq)
+        if piece_on_front is None and not board.is_attacked_by(enemy_color, front_sq):
+            has_luft = True
+            break
+
+    if not has_luft:
+        return [f"back_rank_weakness:{'white' if color == chess.WHITE else 'black'}"]
+    return []
+
+
+def extract_tactical_motifs(
+    board_before: chess.Board,
+    move: chess.Move,
+    board_after: chess.Board,
+) -> list[str]:
+    """Extract all relevant tactical motifs for the position before and after move."""
+    motifs: list[str] = []
+    color = board_before.turn
+    enemy_color = not color
+
+    # 1. Check if the played move executes a fork or skewer
+    motifs.extend(_detect_forks(board_after, move))
+    motifs.extend(_detect_skewers(board_after, move))
+
+    # 2. Check if the player left pieces hanging or enemy has hanging pieces
+    friendly_hanging = _detect_hanging_pieces(board_after, color)
+    for h in friendly_hanging:
+        motifs.append(f"self_{h}")
+
+    enemy_hanging = _detect_hanging_pieces(board_after, enemy_color)
+    for h in enemy_hanging:
+        motifs.append(f"enemy_{h}")
+
+    # 3. Check for pins
+    for pin in _detect_pins(board_after, color):
+        motifs.append(f"self_{pin}")
+    for pin in _detect_pins(board_after, enemy_color):
+        motifs.append(f"enemy_{pin}")
+
+    # 4. Check back rank weakness
+    motifs.extend(_detect_back_rank_weakness(board_after, color))
+
+    return motifs
+
+
+def _build_threat_summary(
+    board_after: chess.Board,
+    reply_move: chess.Move | None,
+    cp_loss: float,
+) -> tuple[str | None, float | None]:
+    if not reply_move:
+        return None, None
+
+    try:
+        reply_san = board_after.san(reply_move) if reply_move in board_after.legal_moves else reply_move.uci()
+    except Exception:
+        reply_san = reply_move.uci()
+
+    captured_piece = _captured_piece_name(board_after, reply_move)
+    to_sq = chess.square_name(reply_move.to_square)
+
+    board_reply = board_after.copy(stack=False)
+    if reply_move in board_after.legal_moves:
+        board_reply.push(reply_move)
+
+    if board_reply.is_checkmate():
+        return f"Immediate checkmate threat via {reply_san}", -10000.0
+    elif captured_piece:
+        return f"Opponent threatens {reply_san} capturing your {captured_piece} on {to_sq}", -float(cp_loss)
+    elif board_reply.is_check():
+        return f"Opponent threatens {reply_san} giving check", -float(cp_loss)
+    elif cp_loss >= 100:
+        return f"Opponent gains strong tactical initiative with {reply_san}", -float(cp_loss)
+
+    return None, None
+
+
 def _pv_preview(board: chess.Board, pv: list[chess.Move] | None, limit: int = PV_PREVIEW_LENGTH) -> tuple[list[str], list[str]]:
     if not pv:
         return [], []
@@ -198,6 +424,9 @@ def _build_move_record(
     board_after = board_before.copy(stack=False)
     board_after.push(move)
 
+    motifs = extract_tactical_motifs(board_before, move, board_after)
+    threat_summary, threat_eval = _build_threat_summary(board_after, reply_move, cp_loss)
+
     record = {
         "move_number": move_number,
         "color": color,
@@ -217,6 +446,9 @@ def _build_move_record(
         "reply_line_uci": reply_line_uci,
         "cp_loss": cp_loss,
         "classification": classification,
+        "motifs": motifs,
+        "threat_summary": threat_summary,
+        "threat_eval": threat_eval,
         **_move_fact_fields(board_before, move, "move"),
         **_move_fact_fields(board_before, best_move, "best_move"),
         **_move_fact_fields(board_after, reply_move, "reply_move"),
@@ -248,6 +480,12 @@ def analyze_position(
             board.copy(stack=False), info_before.get("pv"), pv_length
         )
 
+        motifs_base = []
+        for p in _detect_pins(board, chess.WHITE): motifs_base.append(f"white_{p}")
+        for p in _detect_pins(board, chess.BLACK): motifs_base.append(f"black_{p}")
+        for h in _detect_hanging_pieces(board, chess.WHITE): motifs_base.append(f"white_{h}")
+        for h in _detect_hanging_pieces(board, chess.BLACK): motifs_base.append(f"black_{h}")
+
         result: dict = {
             "eval_before": eval_before,
             "best_move_uci": str(best_move_obj) if best_move_obj else None,
@@ -255,6 +493,7 @@ def analyze_position(
             "best_line_san": best_line_san,
             "best_line_uci": best_line_uci,
             "fen_before": fen,
+            "motifs": motifs_base,
         }
 
         if not (move_uci and len(move_uci) >= 4):
@@ -273,6 +512,7 @@ def analyze_position(
         color = "white" if board.turn == chess.WHITE else "black"
         move_san = board.san(move)
         move_summary_text = _move_summary(board, move)
+        board_before = board.copy(stack=False)
         board.push(move)
         fen_after = board.fen()
 
@@ -291,6 +531,9 @@ def analyze_position(
             board.copy(stack=False), info_after.get("pv"), pv_length
         )
 
+        motifs = extract_tactical_motifs(board_before, move, board)
+        threat_summary, threat_eval = _build_threat_summary(board, dev_best_move_obj, cp_loss)
+
         result.update({
             "move_uci": move_uci,
             "move_san": move_san,
@@ -304,6 +547,9 @@ def analyze_position(
             "deviation_best_move_san": dev_best_move_san,
             "deviation_best_line_san": dev_best_line_san,
             "deviation_best_line_uci": dev_best_line_uci,
+            "motifs": motifs,
+            "threat_summary": threat_summary,
+            "threat_eval": threat_eval,
         })
 
         return result

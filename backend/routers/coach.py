@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from models import CoachRequest, PerMoveCoachRequest, DeviationCoachRequest, GameOverviewRequest
+from models import CoachRequest, PerMoveCoachRequest, DeviationCoachRequest, GameOverviewRequest, AskCoachRequest, AskCoachResponse
 from services.llm_service import (
     COACHING_CACHE_VERSION,
     GAME_OVERVIEW_CACHE_VERSION,
@@ -7,6 +7,7 @@ from services.llm_service import (
     get_per_move_coaching,
     get_deviation_coaching,
     get_game_overview,
+    ask_coach,
 )
 from services.db import (
     get_move_coaching,
@@ -181,3 +182,26 @@ async def get_deviation_coach_feedback(req: DeviationCoachRequest):
         return {"coaching": feedback, "profile_used": _public_coaching_profile(profile)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Deviation coaching failed: {str(e)}")
+
+
+@router.post("/coach/ask", response_model=AskCoachResponse)
+async def ask_coach_endpoint(req: AskCoachRequest):
+    """Interactive Ask Coach: evaluate a position / candidate move and answer student's question."""
+    if not req.fen or not req.question:
+        raise HTTPException(status_code=400, detail="fen and question are required")
+
+    try:
+        profile = _get_active_coaching_profile()
+        res = await ask_coach(
+            fen=req.fen,
+            question=req.question,
+            candidate_uci=req.candidate_uci,
+            candidate_san=req.candidate_san,
+            player_color=req.player_color or "white",
+            username=req.username or profile.get("username"),
+            move_number=req.move_number,
+        )
+        return AskCoachResponse(**res)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ask Coach failed: {str(e)}")
+

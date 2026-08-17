@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Chess } from 'chess.js'
+import { askCoach } from '../api/chess'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -17,6 +18,47 @@ const CLASSIFICATION_META = {
   inaccuracy: { icon: '?!', label: 'Inaccuracy',  color: 'text-yellow-400',  bg: 'bg-yellow-900/30 border-yellow-700/60' },
   mistake:    { icon: '?',  label: 'Mistake',     color: 'text-orange-400',  bg: 'bg-orange-900/30 border-orange-700/60' },
   blunder:    { icon: '??', label: 'Blunder',     color: 'text-red-400',     bg: 'bg-red-900/30 border-red-700/60' },
+}
+
+function formatMotifBadge(motif) {
+  if (motif.startsWith('self_pin:absolute:') || motif.startsWith('pin:absolute:')) {
+    const pieceSq = motif.split(':').pop().replace('_', ' on ')
+    return { icon: '📌', label: `Pinned: ${pieceSq}`, color: 'bg-amber-950/50 text-amber-300 border-amber-700/60' }
+  }
+  if (motif.startsWith('enemy_pin:absolute:')) {
+    const pieceSq = motif.split(':').pop().replace('_', ' on ')
+    return { icon: '📌', label: `Enemy pinned: ${pieceSq}`, color: 'bg-emerald-950/50 text-emerald-300 border-emerald-700/60' }
+  }
+  if (motif.startsWith('self_pin:relative:')) {
+    const pieceSq = motif.split(':').pop().replace('_', ' on ')
+    return { icon: '🎯', label: `Relative pin: ${pieceSq}`, color: 'bg-amber-950/50 text-amber-300 border-amber-700/60' }
+  }
+  if (motif.startsWith('enemy_pin:relative:')) {
+    const pieceSq = motif.split(':').pop().replace('_', ' on ')
+    return { icon: '🎯', label: `Enemy pinned: ${pieceSq}`, color: 'bg-emerald-950/50 text-emerald-300 border-emerald-700/60' }
+  }
+  if (motif.startsWith('fork:')) {
+    return { icon: '🍴', label: 'Tactical Fork', color: 'bg-purple-950/50 text-purple-300 border-purple-700/60' }
+  }
+  if (motif.startsWith('skewer:')) {
+    return { icon: '🍢', label: 'Skewer', color: 'bg-indigo-950/50 text-indigo-300 border-indigo-700/60' }
+  }
+  if (motif.startsWith('self_hanging:') || motif.startsWith('hanging:')) {
+    const pieceSq = motif.split(':').pop().replace('_', ' on ')
+    return { icon: '⚠️', label: `Hanging: ${pieceSq}`, color: 'bg-red-950/50 text-red-300 border-red-700/60' }
+  }
+  if (motif.startsWith('enemy_hanging:')) {
+    const pieceSq = motif.split(':').pop().replace('_', ' on ')
+    return { icon: '✨', label: `Free piece: ${pieceSq}`, color: 'bg-teal-950/50 text-teal-300 border-teal-700/60' }
+  }
+  if (motif.startsWith('self_underdefended:') || motif.startsWith('underdefended:')) {
+    const pieceSq = motif.split(':').pop().replace('_', ' on ')
+    return { icon: '⚠️', label: `Underdefended: ${pieceSq}`, color: 'bg-orange-950/50 text-orange-300 border-orange-700/60' }
+  }
+  if (motif.startsWith('back_rank_weakness:')) {
+    return { icon: '🚪', label: 'Back-rank weakness', color: 'bg-rose-950/50 text-rose-300 border-rose-700/60' }
+  }
+  return { icon: '⚡', label: motif.replace(/_/g, ' '), color: 'bg-gray-800 text-gray-300 border-gray-700' }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -427,6 +469,80 @@ function BestLineViewer({ uciList, fenBefore, onStepPreview, onExitPreview, onPr
 
 // ─── Main component ──────────────────────────────────────────────────────────
 
+function AskCoachBox({ fen, playerColor, moveNumber }) {
+  const [question, setQuestion] = useState('')
+  const [candidateMove, setCandidateMove] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [answer, setAnswer] = useState(null)
+  const [error, setError] = useState(null)
+
+  const handleAsk = async (e) => {
+    e.preventDefault()
+    if (!question.trim()) return
+    setLoading(true)
+    setError(null)
+    setAnswer(null)
+    try {
+      const res = await askCoach({
+        fen,
+        question: question.trim(),
+        candidate_san: candidateMove.trim() || undefined,
+        player_color: playerColor,
+        move_number: moveNumber,
+      })
+      setAnswer(res.answer)
+    } catch (err) {
+      setError(err?.response?.data?.detail || err.message || 'Failed to get answer from coach')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-blue-800/50 bg-blue-950/20 p-3 flex flex-col gap-2">
+      <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-300 uppercase tracking-wide">
+        <span>💬</span> Ask Coach
+      </div>
+      <form onSubmit={handleAsk} className="flex flex-col gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="text"
+            placeholder="Candidate move (e.g. Nxd5, e4)... optional"
+            value={candidateMove}
+            onChange={(e) => setCandidateMove(e.target.value)}
+            className="sm:w-1/3 bg-gray-900 border border-gray-700 rounded-md px-2.5 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+          />
+          <input
+            type="text"
+            placeholder="Ask anything about this position..."
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            className="flex-1 bg-gray-900 border border-gray-700 rounded-md px-2.5 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+          />
+        </div>
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={loading || !question.trim()}
+            className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-xs font-medium transition-colors"
+          >
+            {loading ? 'Thinking…' : 'Ask'}
+          </button>
+        </div>
+      </form>
+
+      {error && <div className="text-xs text-red-400">{error}</div>}
+      {answer && (
+        <div className="mt-2 p-2.5 rounded bg-gray-900/80 border border-blue-700/40 text-xs text-gray-200 leading-relaxed prose prose-invert prose-xs max-w-none">
+          <ReactMarkdown>{answer}</ReactMarkdown>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Main component ──────────────────────────────────────────────────────────
+
 export default function CoachPanel({
   moveCoaching,
   currentIndex,
@@ -484,6 +600,8 @@ export default function CoachPanel({
   const handleLineExitPreview = useCallback(() => {
     onResetBestLinePreview?.()
   }, [onResetBestLinePreview])
+
+  const motifs = currentMove?.motifs || []
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
@@ -574,6 +692,39 @@ export default function CoachPanel({
                 {moveOwnerLabel}
               </span>
             </div>
+
+            {/* Tactical Motif Badges */}
+            {motifs.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {motifs.map((m, idx) => {
+                  const b = formatMotifBadge(m)
+                  return (
+                    <span
+                      key={idx}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] font-medium ${b.color}`}
+                    >
+                      <span>{b.icon}</span>
+                      <span>{b.label}</span>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Opponent Threat Warning */}
+            {currentMove?.threat_summary && (
+              <div className="rounded-lg border border-amber-800/60 bg-amber-950/25 p-2.5 flex items-start gap-2">
+                <span className="text-sm">⚠️</span>
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-400">
+                    Immediate Opponent Threat
+                  </div>
+                  <div className="text-xs text-amber-200 mt-0.5">
+                    {currentMove.threat_summary}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* What you played */}
             {currentMove?.move_summary && (
@@ -673,6 +824,13 @@ export default function CoachPanel({
                 </p>
               )
             )}
+
+            {/* Interactive Ask Coach box */}
+            <AskCoachBox
+              fen={currentMove.fen_before || currentMove.fen_after}
+              playerColor={playerColor}
+              moveNumber={currentMove.move_number}
+            />
           </>
         )}
 
@@ -686,3 +844,4 @@ export default function CoachPanel({
     </div>
   )
 }
+

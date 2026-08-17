@@ -84,6 +84,9 @@ class MoveAnalysis(BaseModel):
     reply_move_summary: Optional[str] = None
     cp_loss: Optional[float]
     classification: str
+    motifs: list[str] = Field(default_factory=list)
+    threat_summary: Optional[str] = None
+    threat_eval: Optional[float] = None
 
 
 class GameSummary(BaseModel):
@@ -136,9 +139,28 @@ class DeviationCoachRequest(BaseModel):
     username: Optional[str] = None
 
 
+class AskCoachRequest(BaseModel):
+    fen: str
+    question: str
+    candidate_uci: Optional[str] = None
+    candidate_san: Optional[str] = None
+    player_color: Optional[str] = "white"
+    username: Optional[str] = None
+    move_number: Optional[int] = None
+
+
+class AskCoachResponse(BaseModel):
+    answer: str
+    candidate_eval: Optional[float] = None
+    best_move_san: Optional[str] = None
+    best_move_eval: Optional[float] = None
+    motifs: list[str] = Field(default_factory=list)
+
+
 class PlayerProfileRequest(BaseModel):
     username: Optional[str] = None
     platform: str = "chesscom"
     main_time_control: Optional[str] = None
     improvement_goal: Optional[str] = None
     focus_area: Optional[str] = None
+

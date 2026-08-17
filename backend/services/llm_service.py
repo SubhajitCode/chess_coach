@@ -278,6 +278,11 @@ def _build_critical_line(move: dict, player_color: str, index: int) -> str:
     )
     if move.get("move_summary"):
         detail += f" Played fact: {move['move_summary']}."
+    if move.get("threat_summary"):
+        detail += f" Threat: {move['threat_summary']}."
+    motifs = move.get("motifs", [])
+    if motifs:
+        detail += f" Tactical motifs: {', '.join(motifs[:4])}."
     if move.get("best_move_san"):
         detail += f" Best was {move['best_move_san']}"
         if move.get("best_move_summary"):
@@ -691,6 +696,10 @@ def _build_target_move_fact_blocks(moves: list[dict], player_color: str, target_
             f"best_line={_best_line_preview(move)}",
             f"fen_before={move.get('fen_before') or 'n/a'}",
         ]
+        if move.get("threat_summary"):
+            lines.append(f"opponent_threat={move['threat_summary']}")
+        if move.get("motifs"):
+            lines.append(f"tactical_motifs={', '.join(move['motifs'][:4])}")
         if classification in ("inaccuracy", "mistake", "blunder") and move.get("reply_move_san"):
             lines.extend([
                 f"best_reply_after_played_move={move.get('reply_move_san')}",
@@ -1263,3 +1272,115 @@ async def get_deviation_coaching(
 
     content = response.choices[0].message.content or "No coaching response received."
     return content
+
+
+def _build_ask_coach_prompt(
+    fen: str,
+    question: str,
+    candidate_san: str | None = None,
+    candidate_summary: str | None = None,
+    candidate_eval: float | None = None,
+    cp_loss: float | None = None,
+    classification: str | None = None,
+    best_move_san: str | None = None,
+    best_line_san: list[str] | None = None,
+    deviation_best_line_san: list[str] | None = None,
+    motifs: list[str] | None = None,
+    threat_summary: str | None = None,
+    player_color: str = "white",
+    move_number: int | None = None,
+    username: str | None = None,
+) -> str:
+    lines = [
+        "You are an expert, encouraging Grandmaster chess coach.",
+        f"A student ({username or player_color.title()}) asks a question about this position:",
+        "POSITION CONTEXT:",
+        f"- FEN: {fen}",
+        f"- Player Side: {player_color.title()}",
+        f"- Engine Best Move: {best_move_san or 'n/a'}",
+        f"- Best Line: {' '.join(best_line_san[:5]) if best_line_san else 'n/a'}",
+    ]
+    if threat_summary:
+        lines.append(f"- Immediate Threat: {threat_summary}")
+    if motifs:
+        lines.append(f"- Tactical Motifs in position: {', '.join(motifs[:5])}")
+
+    if candidate_san:
+        lines.extend([
+            "STUDENT'S CANDIDATE MOVE:",
+            f"- Move: {candidate_san}",
+            f"- Description: {candidate_summary or 'n/a'}",
+            f"- Classification: {classification or 'n/a'} (loss: {cp_loss or 0:.0f} cp)",
+            f"- Continuation after candidate move: {' '.join(deviation_best_line_san[:5]) if deviation_best_line_san else 'n/a'}",
+        ])
+
+    lines.extend([
+        "",
+        "STUDENT'S QUESTION:",
+        f'"{question}"',
+        "",
+        "INSTRUCTIONS:",
+        "1. Directly and clearly answer the student's question in 2-3 concise paragraphs.",
+        "2. Use concrete tactical / positional explanations based strictly on the facts and lines provided above.",
+        "3. Explain why the student's idea works or fails, pointing out key tactics (pins, forks, hanging pieces, threats).",
+        "4. Keep the tone friendly, constructive, and instructive.",
+    ])
+    return "\n".join(lines)
+
+
+async def ask_coach(
+    fen: str,
+    question: str,
+    candidate_uci: str | None = None,
+    candidate_san: str | None = None,
+    player_color: str = "white",
+    username: str | None = None,
+    move_number: int | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+) -> dict:
+    from services.stockfish_service import analyze_position
+
+    # Run quick engine evaluation
+    pos_data = analyze_position(fen, move_uci=candidate_uci)
+
+    cand_san = candidate_san or pos_data.get("move_san")
+    prompt = _build_ask_coach_prompt(
+        fen=fen,
+        question=question,
+        candidate_san=cand_san,
+        candidate_summary=pos_data.get("move_summary"),
+        candidate_eval=pos_data.get("eval_after"),
+        cp_loss=pos_data.get("cp_loss"),
+        classification=pos_data.get("classification"),
+        best_move_san=pos_data.get("best_move_san"),
+        best_line_san=pos_data.get("best_line_san"),
+        deviation_best_line_san=pos_data.get("deviation_best_line_san"),
+        motifs=pos_data.get("motifs"),
+        threat_summary=pos_data.get("threat_summary"),
+        player_color=player_color,
+        move_number=move_number,
+        username=username,
+    )
+
+    config = _get_llm_config(api_key=api_key, model=model)
+    client = _get_client(config)
+
+    logger.info("ask_coach request question=%s prompt_preview=%s", question, _preview_text(prompt))
+
+    response = await client.chat.completions.create(
+        model=config.model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=600,
+        temperature=0.6,
+    )
+
+    content = response.choices[0].message.content or "No response from coach."
+    return {
+        "answer": content,
+        "candidate_eval": pos_data.get("eval_after"),
+        "best_move_san": pos_data.get("best_move_san"),
+        "best_move_eval": pos_data.get("eval_before"),
+        "motifs": pos_data.get("motifs", []),
+    }
+

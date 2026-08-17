@@ -962,6 +962,14 @@ export default function Practice() {
                 </div>
               )}
 
+              {/* Tactical Motif / Threat Clue when hint used */}
+              {hintsUsed > 0 && current?.motifs?.length > 0 && phase === 'playing' && (
+                <div className="p-2.5 rounded-lg border border-yellow-800/40 bg-yellow-950/20 text-xs text-yellow-300 flex items-center gap-2">
+                  <span>💡 Tactical Theme:</span>
+                  <span className="font-semibold">{current.motifs.slice(0, 2).map(m => m.replace(/_/g, ' ')).join(', ')}</span>
+                </div>
+              )}
+
               {/* Hint / Skip (only while playing) */}
               {phase === 'playing' && (
                 <div className="flex gap-2">

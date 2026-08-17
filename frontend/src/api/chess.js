@@ -57,6 +57,9 @@ export const analyzePosition = (fen, moveUci = null, depth = 12, pvLength = 5) =
 export const getDeviationCoaching = (payload) =>
   api.post('/coach/deviation', payload)
 
+export const askCoach = (payload) =>
+  api.post('/coach/ask', payload).then((res) => res.data)
+
 
 /**
  * Stream analysis via SSE. Calls onMove for each move, onSummary at end, onDone when complete.
