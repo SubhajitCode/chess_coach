@@ -1,0 +1,15 @@
+# Core Deep Learning (with Apple Silicon MPS acceleration)
+torch>=2.2.0
+torchvision>=0.17.0
+torchaudio>=2.2.0
+
+# Chess Logic & Compression
+python-chess>=1.999
+zstandard>=0.22.0
+h5py>=3.10.0
+numpy>=1.26.0
+
+# Utilities
+tqdm>=4.66.0
+requests>=2.31.0
+matplotlib>=3.8.0

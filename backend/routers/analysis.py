@@ -1,26 +1,36 @@
+import asyncio
+import json
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from models import AnalyzeRequest, PositionAnalyzeRequest
-from services.stockfish_service import analyze_pgn_stream, analyze_position
+from services.engines.factory import EngineFactory
 from services.db import save_analysis, pgn_hash as compute_pgn_hash
-import asyncio
-import json
 
 router = APIRouter()
 
 
+@router.get("/engines")
+async def get_available_engines():
+    """List all registered chess analysis engines and their hardware capabilities."""
+    return {
+        "engines": EngineFactory.list_available_engines(),
+        "default": "stockfish",
+    }
+
+
 @router.post("/analyze/stream")
 async def analyze_game_stream(req: AnalyzeRequest):
-    """Stream analysis results as Server-Sent Events, one move at a time."""
+    """Stream analysis results as Server-Sent Events from the selected engine strategy."""
     if not req.pgn or not req.pgn.strip():
         raise HTTPException(status_code=400, detail="PGN is required")
 
     depth = req.depth or 18
     player_color = req.player_color or "white"
+    engine_strategy = EngineFactory.get_engine(req.engine or "stockfish")
 
     async def generate():
         loop = asyncio.get_event_loop()
-        gen = analyze_pgn_stream(req.pgn, depth, player_color)
+        gen = engine_strategy.analyze_pgn_stream(req.pgn, depth, player_color)
         collected_moves = []
         collected_summary = {}
         for chunk in gen:
@@ -56,14 +66,16 @@ async def analyze_game_stream(req: AnalyzeRequest):
 
 @router.post("/analyze/position")
 async def analyze_position_route(req: PositionAnalyzeRequest):
-    """Quick analysis of any FEN position, optionally with a specific move to evaluate."""
+    """Quick analysis of any FEN position using the selected engine strategy."""
     if not req.fen or not req.fen.strip():
         raise HTTPException(status_code=400, detail="FEN is required")
+
+    engine_strategy = EngineFactory.get_engine(req.engine or "stockfish")
 
     try:
         result = await asyncio.get_event_loop().run_in_executor(
             None,
-            analyze_position,
+            engine_strategy.analyze_position,
             req.fen,
             req.move_uci,
             req.depth or 12,
@@ -78,4 +90,5 @@ async def analyze_position_route(req: PositionAnalyzeRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Position analysis failed: {str(e)}")
+
 

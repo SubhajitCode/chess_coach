@@ -762,6 +762,41 @@ export default function CoachPanel({
               />
             )}
 
+            {/* Human Model Intuition & Candidates */}
+            {currentMove?.human_candidates?.length > 0 && (
+              <div className="rounded-lg border border-purple-800/50 bg-purple-950/20 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-purple-300 flex items-center gap-1.5">
+                    <span>🧠</span> 1400–1800 Elo Human Intuition
+                  </div>
+                  {currentMove.human_move_prob != null && (
+                    <span className="text-[11px] text-purple-400 font-medium">
+                      Played move popularity: {currentMove.human_move_prob}%
+                    </span>
+                  )}
+                </div>
+                {currentMove.is_human_blindspot && (
+                  <div className="mb-2 px-2 py-1 rounded bg-amber-950/60 border border-amber-600/50 text-[11px] text-amber-300 font-medium flex items-center gap-1">
+                    <span>🎯</span> Common Human Blindspot (frequently chosen by humans but tactically punished)
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  {currentMove.human_candidates.map((cand, idx) => (
+                    <div key={idx} className="flex items-center gap-2 text-xs">
+                      <span className="font-mono font-bold text-gray-200 w-12">{cand.move_san}</span>
+                      <div className="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
+                        <div
+                          className="bg-purple-500 h-full rounded-full transition-all duration-300"
+                          style={{ width: `${Math.min(100, Math.max(5, cand.probability))}%` }}
+                        />
+                      </div>
+                      <span className="text-gray-400 text-[11px] w-10 text-right">{cand.probability}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Best continuation line */}
             {currentMove?.best_line_uci?.length > 1 && cls !== 'best' && (
               <BestLineViewer

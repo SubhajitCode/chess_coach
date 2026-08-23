@@ -5,8 +5,11 @@ const api = axios.create({ baseURL: '/api' })
 export const fetchGames = (source, username, year, month, maxGames = 20) =>
   api.get('/games', { params: { source, username, year, month, max_games: maxGames } })
 
-export const analyzeGame = (pgn, depth = 18, playerColor = null) =>
-  api.post('/analyze', { pgn, depth, player_color: playerColor })
+export const fetchEngines = () =>
+  api.get('/engines').then((res) => res.data)
+
+export const analyzeGame = (pgn, depth = 18, playerColor = null, engine = 'stockfish') =>
+  api.post('/analyze', { pgn, depth, player_color: playerColor, engine })
 
 export const getCoaching = (analysis, playerColor, username = null) =>
   api.post('/coach', { analysis, player_color: playerColor, username })
@@ -51,8 +54,8 @@ export async function computePgnHash(pgn) {
   return hex.slice(0, 24)
 }
 
-export const analyzePosition = (fen, moveUci = null, depth = 12, pvLength = 5) =>
-  api.post('/analyze/position', { fen, move_uci: moveUci, depth, pv_length: pvLength })
+export const analyzePosition = (fen, moveUci = null, depth = 12, pvLength = 5, engine = 'stockfish') =>
+  api.post('/analyze/position', { fen, move_uci: moveUci, depth, pv_length: pvLength, engine })
 
 export const getDeviationCoaching = (payload) =>
   api.post('/coach/deviation', payload)
@@ -65,7 +68,7 @@ export const askCoach = (payload) =>
  * Stream analysis via SSE. Calls onMove for each move, onSummary at end, onDone when complete.
  * Returns an AbortController — call controller.abort() to cancel.
  */
-export function analyzeGameStream({ pgn, depth = 18, playerColor = 'white', onMeta, onMove, onSummary, onDone, onError }) {
+export function analyzeGameStream({ pgn, depth = 18, playerColor = 'white', engine = 'stockfish', onMeta, onMove, onSummary, onDone, onError }) {
   const controller = new AbortController()
 
   ;(async () => {
@@ -73,7 +76,7 @@ export function analyzeGameStream({ pgn, depth = 18, playerColor = 'white', onMe
       const res = await fetch('/api/analyze/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pgn, depth, player_color: playerColor }),
+        body: JSON.stringify({ pgn, depth, player_color: playerColor, engine }),
         signal: controller.signal,
       })
 

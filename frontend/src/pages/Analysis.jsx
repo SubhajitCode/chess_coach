@@ -10,6 +10,7 @@ import {
   getGameOverview,
   computePgnHash,
   analyzePosition,
+  fetchEngines,
 } from '../api/chess'
 import MoveTable from '../components/MoveTable'
 import EvalBar from '../components/EvalBar'
@@ -118,19 +119,23 @@ export default function Analysis() {
   const navigate = useNavigate()
 
   const game = state?.game
-  const playerColor = state?.playerColor || 'white'
-  const username = state?.username
+  const username = state?.username || null
+  const initialPlayerColor = state?.playerColor || (
+    username && game?.black?.toLowerCase() === username.toLowerCase() ? 'black' : 'white'
+  )
 
-  // currentIndex: -1 = start position, 0..n-1 = after move index
-  const [currentIndex, setCurrentIndex] = useState(-1)
-
-  // Streaming analysis state
+  const [playerColor, setPlayerColor] = useState(initialPlayerColor)
   const [streamedMoves, setStreamedMoves] = useState([])
+  const [currentIndex, setCurrentIndex] = useState(-1)
   const [summary, setSummary] = useState(null)
   const [gameMeta, setGameMeta] = useState(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeError, setAnalyzeError] = useState(null)
   const [analyzedCount, setAnalyzedCount] = useState(0)
+
+  // Engine selection state
+  const [selectedEngine, setSelectedEngine] = useState('stockfish')
+  const [availableEngines, setAvailableEngines] = useState([])
 
   // Coaching
   const [moveCoaching, setMoveCoaching] = useState({}) // map: move_index -> feedback string for all moves
@@ -402,6 +407,12 @@ export default function Analysis() {
       }
     : {}
 
+  useEffect(() => {
+    fetchEngines()
+      .then((data) => setAvailableEngines(data.engines || []))
+      .catch(() => {})
+  }, [])
+
   const handleAnalyze = () => {
     // Cancel any in-flight stream
     abortRef.current?.abort()
@@ -436,6 +447,7 @@ export default function Analysis() {
       pgn: game.pgn,
       depth,
       playerColor,
+      engine: selectedEngine,
       onMeta: (meta) => {
         setGameMeta(meta)
         collectedMetaRef.current = meta
@@ -723,17 +735,34 @@ export default function Analysis() {
                 ✓ Cached
               </span>
             )}
+            {/* Engine Selector */}
             <div className="flex items-center gap-1.5">
-              <label className="text-xs text-gray-400">Depth</label>
+              <label className="text-xs text-gray-400">Engine</label>
               <select
-                value={depth}
-                onChange={e => setDepth(Number(e.target.value))}
+                value={selectedEngine}
+                onChange={e => setSelectedEngine(e.target.value)}
                 disabled={analyzing}
-                className="bg-gray-800 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none disabled:opacity-50"
+                className="bg-gray-800 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none disabled:opacity-50 font-medium"
+                title="Select Analysis Engine"
               >
-                {[10, 12, 15, 18, 20, 22].map(d => <option key={d} value={d}>{d}</option>)}
+                <option value="stockfish">⚡ Stockfish 16</option>
+                <option value="human_model">🧠 Human AI (1400–1800)</option>
+                <option value="hybrid">🔮 Hybrid Coach</option>
               </select>
             </div>
+            {selectedEngine === 'stockfish' && (
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs text-gray-400">Depth</label>
+                <select
+                  value={depth}
+                  onChange={e => setDepth(Number(e.target.value))}
+                  disabled={analyzing}
+                  className="bg-gray-800 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none disabled:opacity-50"
+                >
+                  {[10, 12, 15, 18, 20, 22].map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+            )}
             <div className="flex items-center gap-1.5 ml-2 mr-2">
               <label className="text-xs text-gray-400">Arrows</label>
               <button

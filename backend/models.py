@@ -14,6 +14,7 @@ class AnalyzeRequest(BaseModel):
     pgn: str
     depth: Optional[int] = 18
     player_color: Optional[str] = None  # "white" or "black" — auto-detected if None
+    engine: Optional[str] = "stockfish"  # "stockfish", "human_model", or "hybrid"
 
 
 class CoachRequest(BaseModel):
@@ -87,6 +88,9 @@ class MoveAnalysis(BaseModel):
     motifs: list[str] = Field(default_factory=list)
     threat_summary: Optional[str] = None
     threat_eval: Optional[float] = None
+    human_move_prob: Optional[float] = None
+    human_candidates: list[dict] = Field(default_factory=list)
+    is_human_blindspot: bool = False
 
 
 class GameSummary(BaseModel):
@@ -120,6 +124,7 @@ class PositionAnalyzeRequest(BaseModel):
     move_uci: Optional[str] = None   # the deviation move to evaluate
     depth: Optional[int] = 12
     pv_length: Optional[int] = 5
+    engine: Optional[str] = "stockfish"  # "stockfish", "human_model", or "hybrid"
 
 
 class DeviationCoachRequest(BaseModel):
