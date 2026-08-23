@@ -119,6 +119,26 @@ class HybridEngine(BaseChessEngine):
                     motifs = extract_tactical_motifs(board_before, move, board)
                     threat_summary, threat_eval = build_threat_summary(board, reply_move, cp_loss)
 
+                    # Findability of Stockfish's best move in the neural model
+                    best_move_prob = 0.0
+                    if best_move:
+                        try:
+                            bm_idx = encode_move(best_move, board_before.turn)
+                            best_move_prob = round(float(nn_probs[bm_idx]) * 100.0, 1)
+                        except Exception:
+                            best_move_prob = 0.0
+
+                    findability_score = best_move_prob
+                    if findability_score >= 50.0:
+                        findability_tier = "intuitive"
+                    elif findability_score >= 15.0:
+                        findability_tier = "calculated"
+                    else:
+                        findability_tier = "computer_only"
+
+                    practical_cand = human_candidates[0] if human_candidates else None
+                    practical_move_obj = chess.Move.from_uci(practical_cand["move_uci"]) if practical_cand else None
+
                     move_record = {
                         "type": "move",
                         "move_number": move_number,
@@ -145,8 +165,13 @@ class HybridEngine(BaseChessEngine):
                         "human_move_prob": played_prob,
                         "human_candidates": human_candidates,
                         "is_human_blindspot": (played_prob >= 25.0 and cp_loss >= 100.0),
+                        "findability_score": findability_score,
+                        "findability_tier": findability_tier,
+                        "practical_best_move_uci": str(practical_move_obj) if practical_move_obj else None,
+                        "practical_best_move_san": practical_cand["move_san"] if practical_cand else None,
                         **build_move_piece_metadata(board_before, move, "move"),
                         **build_move_piece_metadata(board_before, best_move, "best_move"),
+                        **build_move_piece_metadata(board_before, practical_move_obj, "practical_best_move"),
                         **build_move_piece_metadata(board, reply_move, "reply_move"),
                     }
                     moves_data.append(move_record)
@@ -178,3 +203,19 @@ class HybridEngine(BaseChessEngine):
             sf_res["is_human_blindspot"] = (nn_res["human_move_prob"] >= 25.0 and sf_res.get("cp_loss", 0) >= 100.0)
 
         return sf_res
+
+    def suggest_sparring_move(
+        self,
+        board: chess.Board,
+        temperature: float = 0.2,
+        top_k: int = 3
+    ) -> Dict[str, Any]:
+        # Uses Human Neural Model for candidate selection and Stockfish for eval
+        nn_res = self.neural_net.suggest_sparring_move(board, temperature, top_k)
+        if nn_res.get("is_game_over"):
+            return nn_res
+
+        sf_res = self.stockfish.suggest_sparring_move(board, temperature, 1)
+        nn_res["eval"] = sf_res.get("eval", nn_res["eval"])
+        nn_res["win_probability_pct"] = sf_res.get("win_probability_pct", nn_res["win_probability_pct"])
+        return nn_res

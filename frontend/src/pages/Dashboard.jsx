@@ -418,12 +418,20 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
       <header className="sticky top-0 z-10 border-b border-gray-800 bg-gray-900/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-4">
-          <span className="text-3xl">♛</span>
-          <div>
-            <h1 className="text-xl font-bold text-white">Chess Coach</h1>
-            <p className="text-xs text-gray-400">Import games, diagnose leaks, and turn them into training.</p>
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-3">
+            <span className="text-3xl">♛</span>
+            <div>
+              <h1 className="text-xl font-bold text-white">Chess Coach</h1>
+              <p className="text-xs text-gray-400">Import games, diagnose leaks, and turn them into training.</p>
+            </div>
           </div>
+          <button
+            onClick={() => navigate('/play')}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-white text-xs font-bold transition-all shadow-md hover:scale-105"
+          >
+            <span>⚔️</span> Spar with Human AI
+          </button>
         </div>
       </header>
 

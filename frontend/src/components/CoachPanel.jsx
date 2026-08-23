@@ -680,7 +680,7 @@ export default function CoachPanel({
         {/* ── Engine + AI coaching ── */}
         {!loading && hasAnalysis && currentIndex >= 0 && hasEngineData && (
           <>
-            {/* Classification + ownership */}
+            {/* Classification + ownership + Findability */}
             <div className="flex items-center gap-2 flex-wrap">
               {clsMeta && (
                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold
@@ -691,6 +691,18 @@ export default function CoachPanel({
               <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium ${moveOwnerClass}`}>
                 {moveOwnerLabel}
               </span>
+              {currentMove?.findability_tier && cls !== 'best' && (
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold ${
+                  currentMove.findability_tier === 'intuitive'
+                    ? 'text-emerald-300 bg-emerald-950/60 border-emerald-700/60'
+                    : currentMove.findability_tier === 'calculated'
+                    ? 'text-yellow-300 bg-yellow-950/60 border-yellow-700/60'
+                    : 'text-purple-300 bg-purple-950/60 border-purple-700/60'
+                }`}>
+                  <span>{currentMove.findability_tier === 'intuitive' ? '🟢' : currentMove.findability_tier === 'calculated' ? '🟡' : '🟣'}</span>
+                  <span>{currentMove.findability_tier === 'intuitive' ? 'Standard Pattern' : currentMove.findability_tier === 'calculated' ? 'Calculated' : 'Computer Move'} ({Math.round(currentMove.findability_score || 0)}%)</span>
+                </span>
+              )}
             </div>
 
             {/* Tactical Motif Badges */}
@@ -760,6 +772,21 @@ export default function CoachPanel({
                 onExitPreview={handleBestMoveExitPreview}
                 isPreviewing={bestMovePreviewOn}
               />
+            )}
+
+            {/* Recommended Practical Human Alternative */}
+            {currentMove?.practical_best_move_san && currentMove?.practical_best_move_san !== currentMove?.best_move_san && (
+              <div className="rounded-lg border border-purple-700/50 bg-purple-950/30 p-2.5 flex items-start gap-2.5">
+                <span className="text-sm">🧠</span>
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-purple-300">
+                    Recommended Human Alternative
+                  </div>
+                  <div className="text-xs text-purple-100 mt-0.5 font-medium">
+                    Play <span className="font-mono font-bold text-white bg-purple-900/80 border border-purple-600/60 px-1.5 py-0.5 rounded">{currentMove.practical_best_move_san}</span> instead — natural, solid, and much easier to calculate than the computer line.
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* Human Model Intuition & Candidates */}

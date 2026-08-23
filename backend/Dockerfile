@@ -6,9 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     POETRY_VERSION=1.8.4 \
     POETRY_HOME="/opt/poetry" \
     POETRY_VIRTUALENVS_CREATE=false \
-    STOCKFISH_PATH=/usr/games/stockfish
+    STOCKFISH_PATH=/usr/games/stockfish \
+    CHESS_MODEL_PATH=/app/models/best_chess_policy_model.pt
 
-# Install system dependencies
+# Install system dependencies (stockfish engine, curl for poetry)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     stockfish \
@@ -21,13 +22,16 @@ ENV PATH="$POETRY_HOME/bin:$PATH"
 # Set working directory
 WORKDIR /app
 
-# Create data directory for persistent storage
-RUN mkdir -p /app/data
+# Create directories for persistent database and neural model checkpoints
+RUN mkdir -p /app/data /app/models
+
+# Install lightweight CPU-optimized PyTorch first
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
 # Copy dependency files
 COPY pyproject.toml ./
 
-# Install dependencies
+# Install remaining dependencies via Poetry
 RUN poetry install --no-interaction --no-ansi --no-root
 
 # Copy application code

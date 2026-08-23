@@ -5,6 +5,11 @@ description = "Backend for Chess Analyzer"
 authors = ["Subhajit"]
 package-mode = false
 
+[[tool.poetry.source]]
+name = "pytorch_cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
+
 [tool.poetry.dependencies]
 python = "^3.12"
 fastapi = "0.115.5"
@@ -15,6 +20,8 @@ httpx = "0.27.2"
 openai = "1.54.4"
 python-dotenv = "1.0.1"
 pydantic = "2.9.2"
+numpy = "^1.26.0"
+torch = {version = ">=2.2.0", source = "pytorch_cpu"}
 
 [build-system]
 requires = ["poetry-core"]

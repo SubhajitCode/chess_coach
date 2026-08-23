@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from routers import games, analysis, coach, cache, profile
+from routers import games, analysis, coach, cache, profile, play
 from services.db import init_db
 
 load_dotenv()
@@ -37,6 +37,7 @@ app.include_router(analysis.router, prefix="/api")
 app.include_router(coach.router, prefix="/api")
 app.include_router(cache.router, prefix="/api")
 app.include_router(profile.router, prefix="/api")
+app.include_router(play.router, prefix="/api")
 
 
 @app.get("/api/health")

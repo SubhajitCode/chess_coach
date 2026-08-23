@@ -230,7 +230,7 @@ def main():
                         help="Allowed time control categories (default: Blitz Rapid Classical).")
     parser.add_argument("--min-moves", type=int, default=12, 
                         help="Minimum number of full moves per game (default: 12).")
-    parser.add_argument("--max-games", type=int, default=50000, 
+    parser.add_argument("--max-games", "--count", "-c", dest="max_games", type=int, default=50000, 
                         help="Target number of filtered games to extract (default: 50,000).")
     parser.add_argument("--output", type=str, default=None, 
                         help="Output .pgn file path (default: data/lichess_{min_elo}_{max_elo}_{month}.pgn).")

@@ -63,6 +63,9 @@ export const getDeviationCoaching = (payload) =>
 export const askCoach = (payload) =>
   api.post('/coach/ask', payload).then((res) => res.data)
 
+export const getAiMove = ({ fen, engine = 'human_model', temperature = 0.2, topK = 4 }) =>
+  api.post('/play/move', { fen, engine, temperature, top_k: topK }).then((res) => res.data)
+
 
 /**
  * Stream analysis via SSE. Calls onMove for each move, onSummary at end, onDone when complete.

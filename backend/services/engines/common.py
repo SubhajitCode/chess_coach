@@ -32,19 +32,22 @@ THRESHOLDS = {
     "mistake": 200,
 }
 
-ELO_CALIBRATION_POINTS = [
-    (8.0, 2900),
-    (15.0, 2400),
-    (25.0, 2000),
-    (40.0, 1600),
-    (60.0, 1200),
-    (80.0, 800),
-    (110.0, 500),
-    (150.0, 300),
-    (250.0, 100),
+ACCURACY_ELO_MAP = [
+    (98.0, 2800),
+    (95.0, 2500),
+    (90.0, 2150),
+    (85.0, 1850),
+    (80.0, 1600),
+    (75.0, 1450),
+    (70.0, 1300),
+    (65.0, 1150),
+    (60.0, 1000),
+    (50.0, 750),
+    (40.0, 500),
+    (25.0, 300),
 ]
 
-MAX_CP_LOSS_FOR_STATS = 350.0
+MAX_CP_LOSS_FOR_STATS = 200.0
 
 
 def classify_move(cp_loss: float) -> str:
@@ -62,20 +65,40 @@ def classify_move(cp_loss: float) -> str:
         return "blunder"
 
 
-def estimate_elo(avg_cp_loss: float) -> int:
-    avg_cp_loss = max(10.0, min(MAX_CP_LOSS_FOR_STATS, avg_cp_loss))
-    if avg_cp_loss <= ELO_CALIBRATION_POINTS[0][0]:
-        return ELO_CALIBRATION_POINTS[0][1]
+def estimate_elo(avg_cp_loss: Optional[float] = None, accuracy: Optional[float] = None) -> int:
+    """
+    Calibrates estimated Elo using Chess.com / Lichess Game Review benchmark standards,
+    blending move accuracy (75%) with capped ACPL (25%) to prevent endgame blunder distortion.
+    """
+    if accuracy is not None:
+        acc = max(0.0, min(100.0, float(accuracy)))
+        if acc >= ACCURACY_ELO_MAP[0][0]:
+            elo_acc = ACCURACY_ELO_MAP[0][1]
+        elif acc <= ACCURACY_ELO_MAP[-1][0]:
+            elo_acc = ACCURACY_ELO_MAP[-1][1]
+        else:
+            elo_acc = 1200.0
+            for idx, (top_acc, top_elo) in enumerate(ACCURACY_ELO_MAP[:-1]):
+                bot_acc, bot_elo = ACCURACY_ELO_MAP[idx + 1]
+                if acc <= top_acc and acc >= bot_acc:
+                    span = top_acc - bot_acc
+                    progress = (acc - bot_acc) / span if span > 0 else 0.0
+                    elo_acc = bot_elo + (top_elo - bot_elo) * progress
+                    break
+    else:
+        elo_acc = 1200.0
 
-    for index, (left_cp, left_elo) in enumerate(ELO_CALIBRATION_POINTS[:-1]):
-        right_cp, right_elo = ELO_CALIBRATION_POINTS[index + 1]
-        if avg_cp_loss <= right_cp:
-            span = right_cp - left_cp
-            progress = (avg_cp_loss - left_cp) / span
-            elo = left_elo + (right_elo - left_elo) * progress
-            return round(elo)
+    if avg_cp_loss is not None:
+        capped_cp = min(MAX_CP_LOSS_FOR_STATS, max(0.0, float(avg_cp_loss)))
+        elo_cp = max(300.0, min(2800.0, 2600.0 - capped_cp * 16.0))
+        if accuracy is not None:
+            final_elo = round(elo_acc * 0.75 + elo_cp * 0.25)
+        else:
+            final_elo = round(elo_cp)
+    else:
+        final_elo = round(elo_acc)
 
-    return ELO_CALIBRATION_POINTS[-1][1]
+    return max(300, min(2850, final_elo))
 
 
 def piece_name(piece: Optional[chess.Piece]) -> Optional[str]:
@@ -317,5 +340,5 @@ def build_summary(moves_data: list, player_color: str) -> dict:
         "best_moves": counts["best"],
         "accuracy": accuracy,
         "avg_cp_loss": round(avg_capped_loss, 1) if total_player > 0 else None,
-        "estimated_elo": estimate_elo(avg_capped_loss) if total_player > 0 else None,
+        "estimated_elo": estimate_elo(avg_capped_loss, accuracy) if total_player > 0 else None,
     }

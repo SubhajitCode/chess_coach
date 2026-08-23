@@ -228,3 +228,64 @@ class StockfishEngine(BaseChessEngine):
                 })
 
             return result
+
+    def suggest_sparring_move(
+        self,
+        board: chess.Board,
+        temperature: float = 0.2,
+        top_k: int = 3
+    ) -> Dict[str, Any]:
+        if board.is_game_over():
+            return {
+                "selected_move_uci": None,
+                "selected_move_san": None,
+                "eval": 0.0,
+                "win_probability_pct": 50.0,
+                "candidates": [],
+                "is_game_over": True,
+                "game_result": board.result(),
+            }
+
+        with chess.engine.SimpleEngine.popen_uci(self.stockfish_path) as engine:
+            info = engine.analyse(board, chess.engine.Limit(depth=12), multipv=min(top_k, max(1, len(list(board.legal_moves)))))
+            
+            candidates = []
+            if isinstance(info, list):
+                for entry in info:
+                    pv = entry.get("pv", [])
+                    if pv:
+                        m = pv[0]
+                        sc = score_to_cp(entry.get("score"), board.turn) or 0.0
+                        candidates.append({
+                            "move_san": board.san(m),
+                            "move_uci": m.uci(),
+                            "probability": round(max(5.0, 50.0 + sc / 20.0), 1),
+                        })
+            else:
+                pv = info.get("pv", [])
+                if pv:
+                    m = pv[0]
+                    candidates.append({
+                        "move_san": board.san(m),
+                        "move_uci": m.uci(),
+                        "probability": 100.0,
+                    })
+
+            best_move = chess.Move.from_uci(candidates[0]["move_uci"]) if candidates else next(iter(board.legal_moves))
+            eval_val = 0.0
+            if isinstance(info, list) and info:
+                eval_val = score_to_cp(info[0].get("score"), chess.WHITE) or 0.0
+            elif isinstance(info, dict):
+                eval_val = score_to_cp(info.get("score"), chess.WHITE) or 0.0
+
+            win_pct = round(max(0.0, min(100.0, 50.0 + (eval_val if board.turn == chess.WHITE else -eval_val) / 20.0)), 1)
+
+            return {
+                "selected_move_uci": best_move.uci(),
+                "selected_move_san": board.san(best_move),
+                "eval": eval_val,
+                "win_probability_pct": win_pct,
+                "candidates": candidates[:top_k],
+                "is_game_over": False,
+                "game_result": None,
+            }

@@ -97,3 +97,62 @@ class ChessDualResNet(nn.Module):
         sum_exp = np.sum(exp_logits)
         probs = exp_logits / sum_exp if sum_exp > 0 else legal_mask / max(1.0, np.sum(legal_mask))
         return probs, val
+
+    @torch.no_grad()
+    def search_best_move(
+        self,
+        board: chess.Board,
+        device: torch.device,
+        depth: int = 2,
+        top_candidates: int = 4
+    ) -> Tuple[Optional[chess.Move], float, List[chess.Move]]:
+        """
+        Performs shallow minimax beam search using policy candidate pruning
+        and value head leaf evaluations to calculate tactical refutations.
+        """
+        if board.is_game_over() or depth <= 0:
+            if board.is_checkmate():
+                return None, -1.0, []
+            if board.is_stalemate() or board.is_insufficient_material():
+                return None, 0.0, []
+            _, v = self.evaluate_board(board, device)
+            return None, v, []
+
+        probs, val = self.evaluate_board(board, device)
+        legal_indices = np.where(probs > 0)[0]
+        if len(legal_indices) == 0:
+            return None, val, []
+
+        candidates = []
+        for idx in legal_indices:
+            m = decode_move_index(idx, board.turn)
+            if m in board.legal_moves:
+                candidates.append((m, float(probs[idx])))
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        candidates = candidates[:top_candidates]
+
+        best_score = -999.0
+        best_move = candidates[0][0] if candidates else None
+        best_pv = [best_move] if best_move else []
+
+        for m, p in candidates:
+            board.push(m)
+            if board.is_checkmate():
+                score = 1.0
+                pv = [m]
+            elif depth == 1:
+                _, opp_val = self.evaluate_board(board, device)
+                score = -opp_val
+                pv = [m]
+            else:
+                _, opp_score, opp_pv = self.search_best_move(board, device, depth=depth - 1, top_candidates=top_candidates)
+                score = -opp_score
+                pv = [m] + opp_pv
+            board.pop()
+
+            if score > best_score:
+                best_score = score
+                best_move = m
+                best_pv = pv
+
+        return best_move, best_score, best_pv

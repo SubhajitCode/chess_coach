@@ -87,10 +87,15 @@ class MoveAnalysis(BaseModel):
     classification: str
     motifs: list[str] = Field(default_factory=list)
     threat_summary: Optional[str] = None
-    threat_eval: Optional[float] = None
     human_move_prob: Optional[float] = None
     human_candidates: list[dict] = Field(default_factory=list)
     is_human_blindspot: bool = False
+    findability_score: Optional[float] = None
+    findability_tier: Optional[str] = None  # "intuitive", "calculated", or "computer_only"
+    practical_best_move_uci: Optional[str] = None
+    practical_best_move_san: Optional[str] = None
+    practical_best_move_summary: Optional[str] = None
+    trap_danger: Optional[str] = None
 
 
 class GameSummary(BaseModel):

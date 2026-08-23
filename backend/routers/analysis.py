@@ -14,7 +14,7 @@ async def get_available_engines():
     """List all registered chess analysis engines and their hardware capabilities."""
     return {
         "engines": EngineFactory.list_available_engines(),
-        "default": "stockfish",
+        "default": "hybrid",
     }
 
 
@@ -26,7 +26,7 @@ async def analyze_game_stream(req: AnalyzeRequest):
 
     depth = req.depth or 18
     player_color = req.player_color or "white"
-    engine_strategy = EngineFactory.get_engine(req.engine or "stockfish")
+    engine_strategy = EngineFactory.get_engine(req.engine or "hybrid")
 
     async def generate():
         loop = asyncio.get_event_loop()
@@ -70,7 +70,7 @@ async def analyze_position_route(req: PositionAnalyzeRequest):
     if not req.fen or not req.fen.strip():
         raise HTTPException(status_code=400, detail="FEN is required")
 
-    engine_strategy = EngineFactory.get_engine(req.engine or "stockfish")
+    engine_strategy = EngineFactory.get_engine(req.engine or "hybrid")
 
     try:
         result = await asyncio.get_event_loop().run_in_executor(

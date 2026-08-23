@@ -126,14 +126,21 @@ class HumanNeuralEngine(BaseChessEngine):
         for _ in range(limit):
             if sim_board.is_game_over():
                 break
-            probs, _ = self.model.evaluate_board(sim_board, self.device)
-            legal_indices = np.where(probs > 0)[0]
-            if len(legal_indices) == 0:
+            
+            # If search_best_move is available, use shallow minimax search to avoid blunders
+            if hasattr(self.model, "search_best_move"):
+                best_m, _, _ = self.model.search_best_move(sim_board, self.device, depth=2, top_candidates=4)
+            else:
+                probs, _ = self.model.evaluate_board(sim_board, self.device)
+                legal_indices = np.where(probs > 0)[0]
+                if len(legal_indices) == 0:
+                    break
+                best_idx = legal_indices[np.argmax(probs[legal_indices])]
+                best_m = decode_move_index(best_idx, sim_board.turn)
+
+            if best_m is None or best_m not in sim_board.legal_moves:
                 break
-            best_idx = legal_indices[np.argmax(probs[legal_indices])]
-            best_m = decode_move_index(best_idx, sim_board.turn)
-            if best_m not in sim_board.legal_moves:
-                break
+
             pv_moves.append(best_m)
             pv_san.append(sim_board.san(best_m))
             pv_uci.append(best_m.uci())
@@ -205,15 +212,50 @@ class HumanNeuralEngine(BaseChessEngine):
                 reply_move_obj = chess.Move.from_uci(reply_candidates[0]["move_uci"]) if reply_candidates else None
                 _, reply_line_san, reply_line_uci = self._greedy_pv(board, limit=4)
 
-                if color == "white":
-                    cp_loss = (eval_before_white or 0) - (eval_after_white or 0)
-                else:
-                    cp_loss = (eval_after_white or 0) - (eval_before_white or 0)
-                cp_loss = max(0.0, cp_loss)
+                # Determine whether played move was the model's top choice
+                is_best_move = (best_move_obj is not None and move == best_move_obj)
 
-                classification = classify_move(cp_loss)
+                if is_best_move:
+                    cp_loss = 0.0
+                    classification = "best"
+                else:
+                    # Intra-ply comparison: compare position after played move vs position after best move
+                    if best_move_obj and best_move_obj in board_before.legal_moves:
+                        board_best = board_before.copy(stack=False)
+                        board_best.push(best_move_obj)
+                        probs_best, val_best = self.model.evaluate_board(board_best, self.device)
+                        eval_best_after_white = value_to_cp(val_best, board_best.turn)
+                        if color == "white":
+                            cp_loss = max(0.0, eval_best_after_white - eval_after_white)
+                        else:
+                            cp_loss = max(0.0, eval_after_white - eval_best_after_white)
+                    else:
+                        if color == "white":
+                            cp_loss = max(0.0, (eval_before_white or 0) - (eval_after_white or 0))
+                        else:
+                            cp_loss = max(0.0, (eval_after_white or 0) - (eval_before_white or 0))
+                    classification = classify_move(cp_loss)
+
                 motifs = extract_tactical_motifs(board_before, move, board)
                 threat_summary, threat_eval = build_threat_summary(board, reply_move_obj, cp_loss)
+
+                findability_score = best_candidate["probability"] if best_candidate else 0.0
+                if findability_score >= 50.0:
+                    findability_tier = "intuitive"
+                elif findability_score >= 15.0:
+                    findability_tier = "calculated"
+                else:
+                    findability_tier = "computer_only"
+
+                # Practical best move: highest human confidence move
+                practical_cand = top_candidates[0] if top_candidates else best_candidate
+                practical_move_obj = chess.Move.from_uci(practical_cand["move_uci"]) if practical_cand else None
+
+                trap_danger = None
+                if cp_loss >= 100.0 and reply_candidates and reply_candidates[0]["probability"] >= 40.0:
+                    trap_danger = "high_blunder_danger"
+
+                is_blindspot = (not is_best_move) and (played_prob >= 25.0) and (cp_loss >= 100.0)
 
                 move_record = {
                     "type": "move",
@@ -240,9 +282,15 @@ class HumanNeuralEngine(BaseChessEngine):
                     "threat_eval": threat_eval,
                     "human_move_prob": played_prob,
                     "human_candidates": top_candidates,
-                    "is_human_blindspot": (played_prob >= 25.0 and cp_loss >= 100.0),
+                    "is_human_blindspot": is_blindspot,
+                    "findability_score": findability_score,
+                    "findability_tier": findability_tier,
+                    "practical_best_move_uci": str(practical_move_obj) if practical_move_obj else None,
+                    "practical_best_move_san": practical_cand["move_san"] if practical_cand else None,
+                    "trap_danger": trap_danger,
                     **build_move_piece_metadata(board_before, move, "move"),
                     **build_move_piece_metadata(board_before, best_move_obj, "best_move"),
+                    **build_move_piece_metadata(board_before, practical_move_obj, "practical_best_move"),
                     **build_move_piece_metadata(board, reply_move_obj, "reply_move"),
                 }
                 moves_data.append(move_record)
@@ -274,6 +322,14 @@ class HumanNeuralEngine(BaseChessEngine):
         best_cand = top_candidates[0] if top_candidates else None
         _, best_line_san, best_line_uci = self._greedy_pv(board, limit=pv_length)
 
+        findability_score = best_cand["probability"] if best_cand else 0.0
+        if findability_score >= 50.0:
+            findability_tier = "intuitive"
+        elif findability_score >= 15.0:
+            findability_tier = "calculated"
+        else:
+            findability_tier = "computer_only"
+
         result = {
             "fen": fen,
             "eval": eval_before,
@@ -282,6 +338,10 @@ class HumanNeuralEngine(BaseChessEngine):
             "best_line_san": best_line_san,
             "best_line_uci": best_line_uci,
             "human_candidates": top_candidates,
+            "findability_score": findability_score,
+            "findability_tier": findability_tier,
+            "practical_best_move_uci": best_cand["move_uci"] if best_cand else None,
+            "practical_best_move_san": best_cand["move_san"] if best_cand else None,
         }
 
         if move_uci:
@@ -300,15 +360,36 @@ class HumanNeuralEngine(BaseChessEngine):
             board_before = board.copy(stack=False)
             board.push(move)
             fen_after = board.fen()
-
             probs_after, val_after = self.model.evaluate_board(board, self.device)
             eval_after = value_to_cp(val_after, board.turn)
 
-            if color == "white":
-                cp_loss = (eval_before or 0) - (eval_after or 0)
+            is_best_move = (best_cand is not None and move_uci == best_cand.get("move_uci"))
+            if is_best_move:
+                cp_loss = 0.0
+                classification = "best"
             else:
-                cp_loss = (eval_after or 0) - (eval_before or 0)
-            cp_loss = max(0.0, cp_loss)
+                if best_cand and best_cand.get("move_uci"):
+                    best_move_obj = chess.Move.from_uci(best_cand["move_uci"])
+                    if best_move_obj in board_before.legal_moves:
+                        board_best = board_before.copy(stack=False)
+                        board_best.push(best_move_obj)
+                        probs_best, val_best = self.model.evaluate_board(board_best, self.device)
+                        eval_best_after = value_to_cp(val_best, board_best.turn)
+                        if color == "white":
+                            cp_loss = max(0.0, eval_best_after - eval_after)
+                        else:
+                            cp_loss = max(0.0, eval_after - eval_best_after)
+                    else:
+                        if color == "white":
+                            cp_loss = max(0.0, (eval_before or 0) - (eval_after or 0))
+                        else:
+                            cp_loss = max(0.0, (eval_after or 0) - (eval_before or 0))
+                else:
+                    if color == "white":
+                        cp_loss = max(0.0, (eval_before or 0) - (eval_after or 0))
+                    else:
+                        cp_loss = max(0.0, (eval_after or 0) - (eval_before or 0))
+                classification = classify_move(cp_loss)
 
             dev_candidates = self._get_top_candidates(board, probs_after, top_k=1)
             dev_best_move = chess.Move.from_uci(dev_candidates[0]["move_uci"]) if dev_candidates else None
@@ -323,22 +404,97 @@ class HumanNeuralEngine(BaseChessEngine):
                 played_prob = 0.0
 
             result.update({
-                "move_uci": move_uci,
                 "move_san": move_san,
+                "move_uci": move_uci,
                 "color": color,
-                "eval_after": eval_after,
                 "fen_after": fen_after,
+                "eval_after": eval_after,
                 "cp_loss": round(cp_loss, 1),
-                "classification": classify_move(cp_loss),
-                "deviation_best_move_uci": str(dev_best_move) if dev_best_move else None,
-                "deviation_best_move_san": board.san(dev_best_move) if dev_best_move in board.legal_moves else None,
-                "deviation_best_line_san": dev_best_line_san,
-                "deviation_best_line_uci": dev_best_line_uci,
+                "classification": classification,
                 "motifs": motifs,
                 "threat_summary": threat_summary,
                 "threat_eval": threat_eval,
                 "human_move_prob": played_prob,
-                "is_human_blindspot": (played_prob >= 25.0 and cp_loss >= 100.0),
+                "is_human_blindspot": (not is_best_move) and (played_prob >= 25.0) and (cp_loss >= 100.0),
+                "deviation_best_move_uci": str(dev_best_move) if dev_best_move else None,
+                "deviation_best_move_san": board.san(dev_best_move) if dev_best_move and dev_best_move in board.legal_moves else None,
+                "deviation_best_line_san": dev_best_line_san,
+                "deviation_best_line_uci": dev_best_line_uci,
             })
 
         return result
+
+    def suggest_sparring_move(
+        self,
+        board: chess.Board,
+        temperature: float = 0.2,
+        top_k: int = 3
+    ) -> Dict[str, Any]:
+        if board.is_game_over():
+            return {
+                "selected_move_uci": None,
+                "selected_move_san": None,
+                "eval": 0.0,
+                "win_probability_pct": 50.0,
+                "candidates": [],
+                "is_game_over": True,
+                "game_result": board.result(),
+            }
+
+        probs, val = self.model.evaluate_board(board, self.device)
+        eval_cp = value_to_cp(val, board.turn)
+        win_pct = round((val + 1.0) / 2.0 * 100.0, 1)
+
+        top_candidates = self._get_top_candidates(board, probs, top_k=max(top_k, 5))
+
+        # Perform shallow minimax search to identify the best tactical move and evaluate candidates
+        tactical_best, tactical_score, _ = self.model.search_best_move(
+            board, self.device, depth=2, top_candidates=max(top_k, 5)
+        )
+
+        top_candidates = self._get_top_candidates(board, probs, top_k=max(top_k, 5))
+
+        if temperature <= 0.05 or tactical_best is None:
+            chosen_move = tactical_best or (chess.Move.from_uci(top_candidates[0]["move_uci"]) if top_candidates else next(iter(board.legal_moves)))
+        else:
+            # Filter top candidates to eliminate tactical blunders (moves dropping material)
+            valid_moves = []
+            valid_probs = []
+            for cand in top_candidates:
+                m = chess.Move.from_uci(cand["move_uci"])
+                if m not in board.legal_moves:
+                    continue
+                board.push(m)
+                _, opp_val = self.model.evaluate_board(board, self.device)
+                board.pop()
+                cand_score = -opp_val
+                # Only keep moves that don't throw away significant tactical evaluation
+                if cand_score >= (tactical_score - 0.28):
+                    valid_moves.append(m)
+                    valid_probs.append(cand["probability"])
+
+            if len(valid_moves) > 0:
+                probs_arr = np.array(valid_probs, dtype=np.float32)
+                p_values = probs_arr ** (1.0 / max(0.01, temperature))
+                p_sum = np.sum(p_values)
+                if p_sum > 0:
+                    p_values = p_values / p_sum
+                    chosen_idx = np.random.choice(len(valid_moves), p=p_values)
+                    chosen_move = valid_moves[chosen_idx]
+                else:
+                    chosen_move = valid_moves[0]
+            else:
+                chosen_move = tactical_best or (chess.Move.from_uci(top_candidates[0]["move_uci"]) if top_candidates else next(iter(board.legal_moves)))
+
+        if chosen_move not in board.legal_moves:
+            chosen_move = next(iter(board.legal_moves))
+
+        return {
+            "selected_move_uci": chosen_move.uci(),
+            "selected_move_san": board.san(chosen_move),
+            "eval": eval_cp,
+            "win_probability_pct": win_pct,
+            "candidates": top_candidates[:top_k],
+            "is_game_over": False,
+            "game_result": None,
+        }

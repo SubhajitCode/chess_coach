@@ -42,6 +42,25 @@ class BaseChessEngine(ABC):
         pass
 
     @abstractmethod
+    def suggest_sparring_move(
+        self,
+        board: Any,
+        temperature: float = 0.2,
+        top_k: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Suggests an active move for live sparring, supporting temperature-based sampling.
+        Returns: {
+            "selected_move_uci": str,
+            "selected_move_san": str,
+            "eval": float,
+            "win_probability_pct": float,
+            "candidates": list[dict],
+        }
+        """
+        pass
+
+    @abstractmethod
     def get_metadata(self) -> Dict[str, Any]:
         """
         Returns metadata about the engine (id, display name, description, capabilities, active device).

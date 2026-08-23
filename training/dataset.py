@@ -19,9 +19,51 @@ from torch.utils.data import Dataset
 from chess_encoder import encode_board, encode_move
 
 
+import re
+
+def score_to_value_target(score_cp: float, turn: chess.Color) -> float:
+    """
+    Converts a Stockfish centipawn score to a normalized target in [-1.0, +1.0]
+    from the active player's perspective using a calibrated logistic sigmoid.
+    """
+    # Clamp extreme mate scores
+    if abs(score_cp) >= 9000:
+        val_white = 1.0 if score_cp > 0 else -1.0
+    else:
+        # Sigmoid centered at 0: 400 cp difference = ~90% win probability
+        val_white = 2.0 / (1.0 + np.exp(-score_cp / 400.0)) - 1.0
+    
+    return float(val_white if turn == chess.WHITE else -val_white)
+
+
+def parse_eval_from_comment(comment: str, turn: chess.Color) -> Optional[float]:
+    """
+    Parses Lichess / Stockfish [%eval ...] annotations from PGN comments.
+    Examples:
+      "[%eval 1.45]" -> +145 cp
+      "[%eval #-2]"  -> -10000 cp (forced mate against White)
+    """
+    if not comment:
+        return None
+    match = re.search(r"\[%eval\s+([#-]?\d+\.?\d*)\]", comment)
+    if not match:
+        return None
+    raw = match.group(1)
+    try:
+        if raw.startswith("#"):
+            mate_plies = int(raw[1:])
+            score_cp = 10000.0 if mate_plies > 0 else -10000.0
+        else:
+            # Lichess pawn score (e.g. 1.25 pawns = 125 cp)
+            score_cp = float(raw) * 100.0
+        return score_to_value_target(score_cp, turn)
+    except Exception:
+        return None
+
+
 def parse_game_result(result_str: str, turn: chess.Color) -> float:
     """
-    Computes value target v in {-1.0, 0.0, +1.0} from the active player's perspective.
+    Computes fallback value target v in {-1.0, 0.0, +1.0} from the active player's perspective.
     """
     if result_str == "1-0":
         # White won
@@ -41,14 +83,12 @@ def preprocess_pgn_to_h5(
     max_positions: int = 300000,
     max_games: Optional[int] = None,
     chunk_size: int = 5000,
-    skip_first_n_moves: int = 4  # Skip very early opening book moves for richer tactical variance
+    skip_first_n_moves: int = 4,
+    endgame_oversample: bool = True
 ) -> int:
     """
-    Parses a PGN file and stores canonical board tensors, move targets, and game results
-    into an HDF5 (.h5) binary database.
-    
-    Returns:
-      total_positions_saved (int)
+    Parses a PGN file and stores canonical board tensors, move targets, and calibrated value
+    targets (from [%eval ...] if available, otherwise game result) into an HDF5 binary database.
     """
     os.makedirs(os.path.dirname(h5_output_path) if os.path.dirname(h5_output_path) else ".", exist_ok=True)
     
@@ -57,7 +97,6 @@ def preprocess_pgn_to_h5(
     print(f"Target Capacity: {max_positions:,} positions")
 
     with h5py.File(h5_output_path, "w") as h5f:
-        # Create resizable datasets
         dset_boards = h5f.create_dataset(
             "boards",
             shape=(0, 18, 8, 8),
@@ -102,25 +141,40 @@ def preprocess_pgn_to_h5(
                     continue
 
                 board = game.board()
+                node = game
                 move_count = 0
 
-                for move in game.mainline_moves():
+                while node.variations:
+                    next_node = node.variation(0)
+                    move = next_node.move
                     move_count += 1
+
+                    # Check endgame condition (<= 7 pieces on board)
+                    is_endgame = len(board.piece_map()) <= 7
                     
-                    # Optional: skip first few book opening plies to emphasize midgame/endgame tactics
-                    if move_count > skip_first_n_moves:
+                    if move_count > skip_first_n_moves or is_endgame:
                         try:
                             # 1. Encode board from active player's canonical perspective
                             b_tensor = encode_board(board)
                             # 2. Encode target move
                             m_idx = encode_move(move, board.turn)
-                            # 3. Compute game outcome value target
-                            v_target = parse_game_result(result_str, board.turn)
+                            
+                            # 3. Compute value target: Prefer [%eval] Stockfish comment if present
+                            v_target = parse_eval_from_comment(next_node.comment, board.turn)
+                            if v_target is None:
+                                v_target = parse_game_result(result_str, board.turn)
 
                             buffer_boards.append(b_tensor)
                             buffer_moves.append(m_idx)
                             buffer_values.append([v_target])
                             total_positions += 1
+
+                            # If endgame, oversample by adding once more to enrich sparse endgame distributions
+                            if endgame_oversample and is_endgame and total_positions < max_positions:
+                                buffer_boards.append(b_tensor)
+                                buffer_moves.append(m_idx)
+                                buffer_values.append([v_target])
+                                total_positions += 1
 
                             # Flush buffer to HDF5
                             if len(buffer_boards) >= chunk_size or total_positions >= max_positions:
@@ -148,6 +202,7 @@ def preprocess_pgn_to_h5(
                             pass
 
                     board.push(move)
+                    node = next_node
 
         # Flush any remaining buffer items
         if buffer_boards:

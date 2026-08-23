@@ -12,8 +12,10 @@ services:
       - ./backend/.env
     environment:
       - STOCKFISH_PATH=/usr/games/stockfish
+      - CHESS_MODEL_PATH=/app/models/best_chess_policy_model.pt
     volumes:
       - chess_analyzer_data:/app/data
+      - ./training/models:/app/models:ro
     restart: unless-stopped
 
   frontend:

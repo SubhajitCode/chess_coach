@@ -27,39 +27,57 @@ const CLASSIFICATION_BADGE = {
   blunder: { label: 'Blunder', color: 'bg-red-600' },
 }
 
-const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
-// Calibration based on empirical ACPL data from large game databases.
-// Chess.com ratings are used as reference (tend to run ~200–300 pts above FIDE).
-// Source: Lichess accuracy research + community ACPL/rating studies.
-const ELO_CALIBRATION_POINTS = [
-  [0,   2800],   // engine-perfect play
-  [5,   2400],   // GM level
-  [15,  1900],   // Expert / near-master
-  [30,  1400],   // Strong club player
-  [50,  1100],   // Intermediate
-  [80,   800],   // Casual
-  [120,  600],   // Beginner
-  [200,  300],   // Very beginner
+const ACCURACY_ELO_MAP = [
+  [98, 2800],
+  [95, 2500],
+  [90, 2150],
+  [85, 1850],
+  [80, 1600],
+  [75, 1450],
+  [70, 1300],
+  [65, 1150],
+  [60, 1000],
+  [50, 750],
+  [40, 500],
+  [25, 300],
 ]
+
+const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
 const LAST_SESSION_STORAGE_KEY = 'chess_last_analysis_v1'
 
-function estimateElo(avgCpLoss) {
-  if (avgCpLoss == null || Number.isNaN(avgCpLoss)) return null
+function estimateElo(avgCpLoss, accuracy) {
+  if (accuracy == null && avgCpLoss == null) return null
 
-  const normalizedCpLoss = Math.max(0, avgCpLoss)
-
-  for (let index = 0; index < ELO_CALIBRATION_POINTS.length - 1; index += 1) {
-    const [leftCp, leftElo] = ELO_CALIBRATION_POINTS[index]
-    const [rightCp, rightElo] = ELO_CALIBRATION_POINTS[index + 1]
-    if (normalizedCpLoss <= rightCp) {
-      const span = rightCp - leftCp
-      const progress = span === 0 ? 0 : (normalizedCpLoss - leftCp) / span
-      return Math.round(Math.max(200, Math.min(2800, leftElo + (rightElo - leftElo) * progress)))
+  let eloFromAcc = 1200
+  if (accuracy != null) {
+    const acc = Math.max(0, Math.min(100, accuracy))
+    if (acc >= ACCURACY_ELO_MAP[0][0]) {
+      eloFromAcc = ACCURACY_ELO_MAP[0][1]
+    } else if (acc <= ACCURACY_ELO_MAP[ACCURACY_ELO_MAP.length - 1][0]) {
+      eloFromAcc = ACCURACY_ELO_MAP[ACCURACY_ELO_MAP.length - 1][1]
+    } else {
+      for (let i = 0; i < ACCURACY_ELO_MAP.length - 1; i++) {
+        const [topAcc, topElo] = ACCURACY_ELO_MAP[i]
+        const [botAcc, botElo] = ACCURACY_ELO_MAP[i + 1]
+        if (acc <= topAcc && acc >= botAcc) {
+          const span = topAcc - botAcc
+          const progress = span === 0 ? 0 : (acc - botAcc) / span
+          eloFromAcc = botElo + (topElo - botElo) * progress
+          break
+        }
+      }
     }
   }
 
-  return ELO_CALIBRATION_POINTS[ELO_CALIBRATION_POINTS.length - 1][1]
+  if (avgCpLoss != null && !Number.isNaN(avgCpLoss)) {
+    const cappedCp = Math.min(200.0, Math.max(0, avgCpLoss))
+    const eloFromAcpl = Math.max(300, Math.min(2800, 2600 - cappedCp * 16.0))
+    const finalElo = accuracy != null ? Math.round(eloFromAcc * 0.75 + eloFromAcpl * 0.25) : Math.round(eloFromAcpl)
+    return Math.max(300, Math.min(2850, finalElo))
+  }
+
+  return Math.max(300, Math.min(2850, Math.round(eloFromAcc)))
 }
 
 function prettifyOpening(raw) {
@@ -745,9 +763,19 @@ export default function Analysis() {
                 className="bg-gray-800 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none disabled:opacity-50 font-medium"
                 title="Select Analysis Engine"
               >
-                <option value="stockfish">⚡ Stockfish 16</option>
-                <option value="human_model">🧠 Human AI (1400–1800)</option>
-                <option value="hybrid">🔮 Hybrid Coach</option>
+                {availableEngines.length > 0 ? (
+                  availableEngines.map(eng => (
+                    <option key={eng.id} value={eng.id}>
+                      {eng.name || eng.id}
+                    </option>
+                  ))
+                ) : (
+                  <>
+                    <option value="stockfish">⚡ Stockfish 16</option>
+                    <option value="human_model">🧠 Human AI (1400–1800)</option>
+                    <option value="hybrid">🔮 Hybrid Coach</option>
+                  </>
+                )}
               </select>
             </div>
             {selectedEngine === 'stockfish' && (
@@ -1027,6 +1055,9 @@ export default function Analysis() {
                       summary={summary}
                       streamedMoves={streamedMoves}
                       playerColor={playerColor}
+                      onSelectColor={setPlayerColor}
+                      whiteName={game?.white || 'White'}
+                      blackName={game?.black || 'Black'}
                       analyzing={analyzing}
                       opening={prettifyOpening(gameMeta?.opening || game?.opening)}
                     />
@@ -1197,79 +1228,177 @@ function GameOverviewPanel({ overview, loading, error, onRetry }) {
   )
 }
 
-function SummaryPanel({ summary, streamedMoves, playerColor, analyzing, opening }) {
-  // Live-compute stats from streamed moves if summary not yet received
-  const playerMoves = streamedMoves.filter(m => m.color === playerColor)
-  const liveBlunders = playerMoves.filter(m => m.classification === 'blunder').length
-  const liveMistakes = playerMoves.filter(m => m.classification === 'mistake').length
-  const liveInaccuracies = playerMoves.filter(m => m.classification === 'inaccuracy').length
-  const liveGood = playerMoves.filter(m => m.classification === 'good').length
-  const liveExcellent = playerMoves.filter(m => m.classification === 'excellent').length
-  const liveBest = playerMoves.filter(m => m.classification === 'best').length
-
-  const liveAccuracy = playerMoves.length > 0
-    ? Math.round(playerMoves.reduce((acc, m) =>
-        acc + ({ best: 100, excellent: 90, good: 75, inaccuracy: 50, mistake: 25, blunder: 0 }[m.classification] || 0), 0
-      ) / playerMoves.length)
-    : null
-
-  const liveAvgCpLoss = playerMoves.length > 0
-    ? playerMoves.reduce((acc, m) => acc + (m.cp_loss || 0), 0) / playerMoves.length
-    : null
-
-  const liveElo = estimateElo(liveAvgCpLoss)
-
-  const s = summary || {
-    blunders: liveBlunders,
-    mistakes: liveMistakes,
-    inaccuracies: liveInaccuracies,
-    good_moves: liveGood,
-    excellent_moves: liveExcellent,
-    best_moves: liveBest,
-    accuracy: liveAccuracy,
-    estimated_elo: liveElo,
+function computeSideStats(moves) {
+  if (!moves || moves.length === 0) {
+    return {
+      blunders: 0,
+      mistakes: 0,
+      inaccuracies: 0,
+      good_moves: 0,
+      excellent_moves: 0,
+      best_moves: 0,
+      accuracy: null,
+      avgCpLoss: null,
+      estimated_elo: null,
+    }
   }
 
+  const blunders = moves.filter(m => m.classification === 'blunder').length
+  const mistakes = moves.filter(m => m.classification === 'mistake').length
+  const inaccuracies = moves.filter(m => m.classification === 'inaccuracy').length
+  const good = moves.filter(m => m.classification === 'good').length
+  const excellent = moves.filter(m => m.classification === 'excellent').length
+  const best = moves.filter(m => m.classification === 'best').length
+
+  const accuracy = Math.round(
+    moves.reduce((acc, m) =>
+      acc + ({ best: 100, excellent: 90, good: 75, inaccuracy: 50, mistake: 25, blunder: 0 }[m.classification] || 0), 0
+    ) / moves.length
+  )
+
+  const cappedCpLosses = moves.map(m => Math.min(200.0, Math.max(0, m.cp_loss || 0)))
+  const avgCpLoss = cappedCpLosses.reduce((acc, cp) => acc + cp, 0) / moves.length
+  const estimated_elo = estimateElo(avgCpLoss, accuracy)
+
+  return {
+    blunders,
+    mistakes,
+    inaccuracies,
+    good_moves: good,
+    excellent_moves: excellent,
+    best_moves: best,
+    accuracy,
+    avgCpLoss: Math.round(avgCpLoss * 10) / 10,
+    estimated_elo,
+  }
+}
+
+function SummaryPanel({ summary, streamedMoves, playerColor, onSelectColor, whiteName = 'White', blackName = 'Black', analyzing, opening }) {
+  const whiteMoves = streamedMoves.filter(m => m.color === 'white')
+  const blackMoves = streamedMoves.filter(m => m.color === 'black')
+
+  const whiteStats = computeSideStats(whiteMoves)
+  const blackStats = computeSideStats(blackMoves)
+
+  const activeStats = playerColor === 'white' ? whiteStats : blackStats
+  const s = (summary && playerColor === (summary.player_color || playerColor)) ? summary : activeStats
+
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-700 p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
-          Game Summary {analyzing && <span className="text-blue-400 normal-case font-normal text-xs ml-1">(live)</span>}
+    <div className="bg-gray-900 rounded-xl border border-gray-700 p-4 flex flex-col gap-3.5">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+          <span>📊 Performance & Elo Audit</span>
+          {analyzing && <span className="text-blue-400 normal-case font-normal text-xs">(live evaluating with Stockfish)</span>}
         </h3>
-        <div className="flex items-center gap-3">
-          {s.estimated_elo && (
-            <div className="text-right">
-              <div className="text-xl font-bold text-purple-400">~{s.estimated_elo}</div>
-              <div className="text-xs text-gray-500">Est. ELO</div>
+        <span className="text-[11px] text-gray-400">Click a player to switch perspective</span>
+      </div>
+
+      {/* Dual Player Comparison Cards */}
+      <div className="grid grid-cols-2 gap-2.5">
+        {/* White Card */}
+        <button
+          onClick={() => onSelectColor && onSelectColor('white')}
+          className={`p-3 rounded-xl text-left border transition-all flex flex-col justify-between gap-1.5 ${
+            playerColor === 'white'
+              ? 'bg-blue-950/40 border-blue-500 shadow-md ring-1 ring-blue-500/40'
+              : 'bg-gray-800/60 border-gray-700 hover:bg-gray-800'
+          }`}
+        >
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="w-3 h-3 rounded-sm bg-gray-100 border border-gray-300 flex-shrink-0" />
+              <span className="text-xs font-bold text-gray-200 truncate">{whiteName}</span>
             </div>
-          )}
-          {s.accuracy !== null && (
-            <div className="text-right">
-              <div className="text-2xl font-bold text-blue-400">{s.accuracy}%</div>
-              <div className="text-xs text-gray-500">Accuracy</div>
+            {playerColor === 'white' && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white font-medium">Active</span>
+            )}
+          </div>
+          <div className="flex items-baseline justify-between w-full mt-1">
+            <div>
+              <div className="text-xs text-gray-400 font-medium">Est. Elo</div>
+              <div className="text-lg font-bold text-purple-400">
+                {whiteStats.estimated_elo ? `~${whiteStats.estimated_elo}` : '—'}
+              </div>
             </div>
-          )}
-        </div>
+            <div className="text-right">
+              <div className="text-xs text-gray-400 font-medium">Accuracy</div>
+              <div className="text-lg font-bold text-blue-400">
+                {whiteStats.accuracy !== null ? `${whiteStats.accuracy}%` : '—'}
+              </div>
+            </div>
+          </div>
+          <div className="text-[10px] text-gray-400 flex items-center gap-2 pt-1 border-t border-gray-700/60">
+            <span>{whiteStats.blunders} blunders</span>
+            <span>·</span>
+            <span>{whiteStats.mistakes} mistakes</span>
+          </div>
+        </button>
+
+        {/* Black Card */}
+        <button
+          onClick={() => onSelectColor && onSelectColor('black')}
+          className={`p-3 rounded-xl text-left border transition-all flex flex-col justify-between gap-1.5 ${
+            playerColor === 'black'
+              ? 'bg-purple-950/40 border-purple-500 shadow-md ring-1 ring-purple-500/40'
+              : 'bg-gray-800/60 border-gray-700 hover:bg-gray-800'
+          }`}
+        >
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="w-3 h-3 rounded-sm bg-gray-900 border border-gray-600 flex-shrink-0" />
+              <span className="text-xs font-bold text-gray-200 truncate">{blackName}</span>
+            </div>
+            {playerColor === 'black' && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-600 text-white font-medium">Active</span>
+            )}
+          </div>
+          <div className="flex items-baseline justify-between w-full mt-1">
+            <div>
+              <div className="text-xs text-gray-400 font-medium">Est. Elo</div>
+              <div className="text-lg font-bold text-purple-400">
+                {blackStats.estimated_elo ? `~${blackStats.estimated_elo}` : '—'}
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-xs text-gray-400 font-medium">Accuracy</div>
+              <div className="text-lg font-bold text-blue-400">
+                {blackStats.accuracy !== null ? `${blackStats.accuracy}%` : '—'}
+              </div>
+            </div>
+          </div>
+          <div className="text-[10px] text-gray-400 flex items-center gap-2 pt-1 border-t border-gray-700/60">
+            <span>{blackStats.blunders} blunders</span>
+            <span>·</span>
+            <span>{blackStats.mistakes} mistakes</span>
+          </div>
+        </button>
       </div>
 
       {/* Opening badge */}
       {opening && (
-        <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-gray-800/60 rounded-lg border border-gray-700">
-          <span className="text-base">♟</span>
-          <div>
-            <div className="text-xs text-gray-500 uppercase tracking-wide font-medium">Opening</div>
-            <div className="text-sm text-gray-200 font-semibold">{opening}</div>
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/60 rounded-lg border border-gray-700">
+          <span className="text-sm">♟</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-gray-500 uppercase tracking-wide font-medium">Opening:</span>
+            <span className="text-xs text-gray-200 font-semibold">{opening}</span>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-2">
-        <StatBadge label="Blunders" value={s.blunders} color="text-red-400" />
-        <StatBadge label="Mistakes" value={s.mistakes} color="text-orange-400" />
-        <StatBadge label="Inaccuracies" value={s.inaccuracies} color="text-yellow-400" />
-        <StatBadge label="Good" value={s.good_moves} color="text-lime-400" />
-        <StatBadge label="Excellent" value={s.excellent_moves} color="text-green-400" />
-        <StatBadge label="Best" value={s.best_moves} color="text-emerald-400" />
+      {/* Detailed Move Quality Breakdown for Active Player */}
+      <div>
+        <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+          <span>{playerColor === 'white' ? whiteName : blackName} Move Distribution</span>
+          <span className="text-gray-500 normal-case">{activeStats.total ? `${activeStats.total} moves` : ''}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <StatBadge label="Blunders" value={s.blunders ?? activeStats.blunders} color="text-red-400" />
+          <StatBadge label="Mistakes" value={s.mistakes ?? activeStats.mistakes} color="text-orange-400" />
+          <StatBadge label="Inaccuracies" value={s.inaccuracies ?? activeStats.inaccuracies} color="text-yellow-400" />
+          <StatBadge label="Good" value={s.good_moves ?? activeStats.good_moves} color="text-lime-400" />
+          <StatBadge label="Excellent" value={s.excellent_moves ?? activeStats.excellent_moves} color="text-green-400" />
+          <StatBadge label="Best" value={s.best_moves ?? activeStats.best_moves} color="text-emerald-400" />
+        </div>
       </div>
     </div>
   )
@@ -1277,9 +1406,9 @@ function SummaryPanel({ summary, streamedMoves, playerColor, analyzing, opening 
 
 function StatBadge({ label, value, color }) {
   return (
-    <div className="bg-gray-800 rounded-lg px-3 py-2 text-center">
-      <div className={`text-xl font-bold ${color}`}>{value}</div>
-      <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+    <div className="bg-gray-800 rounded-lg px-3 py-2 text-center border border-gray-700/40">
+      <div className={`text-lg font-bold ${color}`}>{value ?? 0}</div>
+      <div className="text-[11px] text-gray-400 mt-0.5">{label}</div>
     </div>
   )
 }

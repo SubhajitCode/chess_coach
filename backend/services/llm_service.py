@@ -287,7 +287,10 @@ def _build_critical_line(move: dict, player_color: str, index: int) -> str:
         detail += f" Best was {move['best_move_san']}"
         if move.get("best_move_summary"):
             detail += f" ({move['best_move_summary']})"
-        detail += "."
+    if move.get("findability_tier"):
+        detail += f" Findability: {move['findability_tier']} ({move.get('findability_score', 0):.0f}% confidence)."
+    if move.get("practical_best_move_san") and move.get("practical_best_move_san") != move.get("best_move_san"):
+        detail += f" Practical human choice was {move['practical_best_move_san']}."
     best_line = _best_line_preview(move)
     if best_line != "n/a":
         detail += f" PV: {best_line}."
@@ -694,8 +697,13 @@ def _build_target_move_fact_blocks(moves: list[dict], player_color: str, target_
             f"best_move={move.get('best_move_san') or 'n/a'}",
             f"best_move_fact={move.get('best_move_summary') or 'n/a'}",
             f"best_line={_best_line_preview(move)}",
-            f"fen_before={move.get('fen_before') or 'n/a'}",
         ]
+        if move.get("findability_tier"):
+            lines.append(f"findability_tier={move['findability_tier']} (human_confidence={move.get('findability_score', 0):.0f}%)")
+        if move.get("practical_best_move_san") and move.get("practical_best_move_san") != move.get("best_move_san"):
+            lines.append(f"practical_human_alternative={move['practical_best_move_san']}")
+        if move.get("is_human_blindspot"):
+            lines.append("is_common_human_blindspot=true (frequent psychological mistake for 1400-1800 players)")
         if move.get("threat_summary"):
             lines.append(f"opponent_threat={move['threat_summary']}")
         if move.get("motifs"):
@@ -722,31 +730,32 @@ def _deterministic_feedback(move: dict, player_color: str) -> str | None:
     reply_line = _reply_line_preview(move)
     best_move = move.get("best_move_san")
     best_line = _best_line_preview(move)
+    findability_tier = move.get("findability_tier")
 
     if reply_move:
         if role == "player":
             if move.get("reply_move_is_checkmate"):
-                feedback = f"After {played_move}, {reply_move} ended the game immediately."
+                feedback = f"After {played_move}, {reply_move} delivered immediate checkmate."
             elif move.get("reply_move_is_capture") and move.get("reply_move_captured_piece"):
-                feedback = f"After {played_move}, {reply_move} won your {move['reply_move_captured_piece']} and left you on the back foot."
+                feedback = f"Playing {played_move} left your {move['reply_move_captured_piece']} vulnerable, allowing {reply_move} to win material."
             elif move.get("reply_move_is_check"):
-                feedback = f"After {played_move}, {reply_move} put you in check and handed the initiative to your opponent."
+                feedback = f"After {played_move}, {reply_move} seized the initiative with check."
             else:
-                feedback = f"After {played_move}, {reply_move} put you under immediate pressure."
+                feedback = f"After {played_move}, {reply_move} put your position under severe tactical pressure."
         else:
-            feedback = f"This gave you the chance to play {reply_move} and take over the position."
+            feedback = f"This blunder opened the door for {reply_move} to take over the game."
 
         if best_move:
-            if move.get("best_move_is_checkmate"):
-                feedback += f" Instead, {best_move} would have finished the game on the spot."
+            if findability_tier == "computer_only":
+                feedback += f" The computer defense was {best_move}, though difficult to spot."
+            elif move.get("best_move_is_checkmate"):
+                feedback += f" Instead, {best_move} would have forced immediate checkmate."
             elif move.get("best_move_is_capture") and move.get("best_move_captured_piece"):
-                feedback += f" Instead, {best_move} would have won material immediately."
-            elif move.get("best_move_is_check"):
-                feedback += f" Instead, {best_move} would have kept the initiative with check."
+                feedback += f" Instead, {best_move} would have won material cleanly."
             else:
-                feedback += f" Instead, {best_move} kept the position more under control."
+                feedback += f" Instead, {best_move} was the necessary move to maintain control."
         elif reply_line != "n/a":
-            feedback += f" The critical line starts {reply_line}."
+            feedback += f" The critical line begins with {reply_line}."
         return feedback
 
     if not best_move:
@@ -754,16 +763,16 @@ def _deterministic_feedback(move: dict, player_color: str) -> str | None:
 
     if move.get("best_move_is_checkmate"):
         if role == "player":
-            return f"You missed {best_move}, which would have finished the game on the spot."
-        return f"This gave you a winning chance: {best_move} would have finished the game on the spot."
+            return f"You missed {best_move}, which would have ended the game on the spot."
+        return f"This gave you a winning chance: {best_move} would have finished the game."
 
     if move.get("best_move_is_capture") and move.get("best_move_captured_piece"):
         if role == "player":
-            feedback = f"You missed {best_move}, which would have won material immediately."
+            feedback = f"You overlooked {best_move}, which would have won material immediately."
         else:
-            feedback = f"This gave you a tactical chance: {best_move} would have won material immediately."
+            feedback = f"This gave you a clear tactical opening: {best_move} wins material."
         if best_line != "n/a":
-            feedback += f" The best line starts {best_line}."
+            feedback += f" Best continuation: {best_line}."
         return feedback
 
     return None
@@ -786,50 +795,37 @@ def _build_per_move_chunk_prompt(
     player_name = username or (white if player_color == "white" else black)
     move_window = _build_move_context_lines(moves, player_color, target_indices)
     target_blocks = _build_target_move_fact_blocks(moves, player_color, target_indices)
-    game_brief = _build_game_brief(analysis, player_color, username, profile)
     target_list = ", ".join(str(idx) for idx in target_indices)
     strict_block = ""
     if strict_json:
         strict_block = (
             "\nSTRICT OUTPUT CONTRACT:\n"
-            "- Start the first character with [\n"
-            "- End the final character with ]\n"
-            "- Do not include analysis, notes, or thinking before or after the JSON array\n"
-            "- If you are about to explain your reasoning, do not; output the JSON array directly\n"
+            "- Output ONLY a valid JSON array starting with [ and ending with ]\n"
+            "- No markdown, thinking, or introductory text\n"
         )
 
-    return f"""You are an expert chess coach writing concise per-move feedback for "{player_name}" who played as {player_color}.
+    return f"""You are a master chess coach providing deep, instructive per-move coaching for "{player_name}" ({player_color}).
 
-Use the compressed game brief and the local move window below. Give feedback ONLY for target moves (lines starting with "*"). Lines starting with "-" are context only.
+Game: {white} vs {black} ({result}) | Opening: {opening}
 
-Rules:
-- Respond with ONLY a JSON array. No markdown or extra text.
-- Return exactly one item for every target move index: {target_list}
-- Each item must be {{"move_index": <number>, "feedback": "<text>"}}
-- Keep each feedback to at most 2 sentences and about 45 words.
-- For the player's strong moves, explain the idea or strength briefly.
-- For the player's weak moves, explain what went wrong and what the better move achieved.
-- When `best_reply_after_played_move` is present for a weak move, use it to explain the punishment or threat the played move allowed before describing the better move.
-- For the opponent's strong moves, explain the threat or idea created against the player.
-- For the opponent's weak moves, explain the chance it gave the player.
-- Use natural coaching language like "You found...", "Your opponent created...", "This gave you a chance...".
-- Explain the consequence in plain English. Do not simply restate raw move facts like "queen from d2 moves to f4" unless that detail is needed to make the consequence clear.
-- Treat `played_fact`, `best_move_fact`, `best_line`, `best_reply_fact`, and `best_reply_line` as authoritative.
-- Never invent piece identities, captures, or square contents that are not explicitly supported by those facts.
-- If a fact is missing, stay generic instead of guessing.
-- Let the saved coaching profile influence what you emphasize, especially the player's goal and focus area, but only when the move facts support that emphasis.
-- Do not omit any target move.
+COACHING METHODOLOGY (3-Part Pedagogical Formula):
+For each target move index, diagnose the root cause with depth and clarity:
+1. [Thinking Root Cause / Temptation]: What did the player overlook or get tempted by? (e.g. Premature attack before castling, neglecting a loose piece, falling for a natural impulse).
+2. [Exact Tactical Punishment]: What concrete threat or sequence did the move allow?
+3. [Master Principle / Rule of Thumb]: A memorable, actionable takeaway rule for future games (e.g. "Develop knights before pushing wing pawns", "Check all opponent captures before quiet moves").
+
+SPECIAL INSTRUCTIONS:
+- When `findability_tier=computer_only`: Be empathetic. Reassure the player that the engine defense was obscure, and explain the natural practical plan.
+- When `is_common_human_blindspot=true`: Highlight that this is a classic psychological trap for club players.
+- For player's strong/best moves: Explain the concrete strategic achievement (e.g. claiming the outpost, punishing overextension).
+- Never output passive coordinates like "Pawn moves from e2 to e4". Speak with authoritative, instructive chess terminology.
+- Respond with ONLY a JSON array with one object per target index ({target_list}):
+  [{{"move_index": <number>, "feedback": "<Deep 2-3 sentence coaching feedback>"}}]
 {strict_block}
-
-GAME BRIEF:
-{game_brief}
-
-GAME: {white} vs {black} | Result: {result} | Opening: {opening}
-
 TARGET MOVE FACTS:
 {target_blocks}
 
-LOCAL MOVE WINDOW:
+LOCAL CONTEXT:
 {move_window}
 """
 
