@@ -57,7 +57,7 @@ export async function getCachedAnalysis(
 ): Promise<CachedAnalysisResponse | null> {
   try {
     const { data } = await apiClient.get(`/api/analysis/cache/${pgnHash}`)
-    return data
+    return (data?.cached ?? (data?.moves ? data : null)) as CachedAnalysisResponse | null
   } catch {
     return null
   }
@@ -90,10 +90,12 @@ export function analyzeGameStream(options: AnalyzeGameStreamOptions): {
     },
     {
       onEvent: (event, data) => {
-        if (event === 'meta') onMeta?.(data)
-        else if (event === 'move') onMove?.(data)
-        else if (event === 'summary') onSummary?.(data)
-        else if (event === 'error') onError?.(data?.error || 'Analysis failed')
+        const eventType = data?.type || event
+        if (eventType === 'meta') onMeta?.(data)
+        else if (eventType === 'move') onMove?.(data)
+        else if (eventType === 'summary') onSummary?.(data)
+        else if (eventType === 'error')
+          onError?.(data?.message || data?.error || 'Analysis failed')
       },
       onDone,
       onError: (err) => onError?.(err.message),

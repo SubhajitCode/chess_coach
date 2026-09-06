@@ -59,9 +59,17 @@ export async function readSseStream(
               currentEvent = trimmed.slice(6).trim()
             } else if (trimmed.startsWith('data:')) {
               const rawData = trimmed.slice(5).trim()
+              if (rawData === '[DONE]') {
+                onDone?.()
+                return
+              }
               try {
                 const parsedData = JSON.parse(rawData)
-                onEvent?.(currentEvent, parsedData)
+                const eventType =
+                  currentEvent !== 'message'
+                    ? currentEvent
+                    : parsedData?.type || 'message'
+                onEvent?.(eventType, parsedData)
               } catch {
                 onEvent?.(currentEvent, rawData)
               }

@@ -17,6 +17,7 @@ export interface AnalysisHeaderProps {
   analyzedCount: number
   totalMoves: number
   onAnalyze: () => void
+  onStop?: () => void
   onBack: () => void
 }
 
@@ -35,6 +36,7 @@ export default function AnalysisHeader({
   analyzedCount,
   totalMoves,
   onAnalyze,
+  onStop,
   onBack,
 }: AnalysisHeaderProps) {
   const progressPercent =
@@ -147,11 +149,54 @@ export default function AnalysisHeader({
       </div>
 
       {analyzing && (
-        <div className="w-full bg-gray-800 h-1 overflow-hidden">
-          <div
-            className="bg-blue-500 h-full transition-all duration-300"
-            style={{ width: `${progressPercent}%` }}
-          />
+        <div className="border-t border-gray-800 bg-gray-950/80 px-6 py-2.5">
+          <div className="max-w-7xl mx-auto flex items-center gap-4">
+            <div className="flex items-center gap-2 text-xs text-blue-400 font-medium whitespace-nowrap">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
+              </span>
+              <span>
+                Evaluating with{' '}
+                <span className="text-white font-semibold">
+                  {availableEngines.find((e) => e.id === selectedEngine)?.name || selectedEngine}
+                </span>
+              </span>
+            </div>
+
+            <div
+              role="progressbar"
+              aria-label="Game analysis progress"
+              aria-valuenow={progressPercent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              className="flex-1 bg-gray-800 rounded-full h-2.5 overflow-hidden shadow-inner border border-gray-700/60 relative"
+            >
+              <div
+                className="h-full bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-400 transition-all duration-300 rounded-full"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+
+            <div className="flex items-center gap-2 text-xs font-mono text-gray-300 whitespace-nowrap">
+              <span>
+                {analyzedCount} / {totalMoves} moves
+              </span>
+              <span className="px-1.5 py-0.5 rounded bg-blue-950/80 border border-blue-700/60 text-blue-300 font-semibold text-[11px]">
+                {progressPercent}%
+              </span>
+            </div>
+
+            {onStop && (
+              <button
+                type="button"
+                onClick={onStop}
+                className="px-2.5 py-1 bg-red-950/80 hover:bg-red-900 border border-red-700/70 text-red-300 rounded-md text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Stop
+              </button>
+            )}
+          </div>
         </div>
       )}
     </header>

@@ -65,6 +65,7 @@ export default function AnalysisView() {
     fullAnalysis,
     maxNavigableIndex,
     handleAnalyze,
+    handleStopAnalysis,
     handleMoveClick,
     handleRequestOverview,
     handleRequestCoaching,
@@ -116,6 +117,7 @@ export default function AnalysisView() {
         analyzedCount={analyzedCount}
         totalMoves={totalMoves}
         onAnalyze={handleAnalyze}
+        onStop={handleStopAnalysis}
         onBack={() => navigate('/')}
       />
 
@@ -353,6 +355,68 @@ export default function AnalysisView() {
                       >
                         ▶ Analyze Game
                       </button>
+                    </div>
+                  )}
+
+                  {analyzing && streamedMoves.length === 0 && (
+                    <div className="bg-gray-900 rounded-xl border border-blue-800/40 p-6 flex flex-col gap-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="relative flex h-3 w-3">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                            <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500" />
+                          </span>
+                          <div>
+                            <h4 className="text-sm font-semibold text-white">Starting Engine Analysis</h4>
+                            <p className="text-xs text-gray-400">
+                              Evaluating {totalMoves} moves with {availableEngines.find((e) => e.id === selectedEngine)?.name || selectedEngine}...
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-xs font-mono text-blue-400 font-medium">0 / {totalMoves}</span>
+                      </div>
+                      <div
+                        role="progressbar"
+                        aria-label="Initial engine analysis progress"
+                        aria-valuenow={0}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        className="w-full bg-gray-800 rounded-full h-2 overflow-hidden"
+                      >
+                        <div className="h-full bg-blue-500 animate-pulse rounded-full w-1/6" />
+                      </div>
+                    </div>
+                  )}
+
+                  {analyzing && streamedMoves.length > 0 && (
+                    <div className="bg-gray-900/90 rounded-xl border border-blue-900/60 p-3.5 flex flex-col gap-2 shadow-sm">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2 text-blue-300 font-medium">
+                          <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+                          </span>
+                          <span>Analyzing moves with engine...</span>
+                        </div>
+                        <span className="font-mono text-gray-300 font-semibold">
+                          {analyzedCount} / {totalMoves} moves ({totalMoves > 0 ? Math.round((analyzedCount / totalMoves) * 100) : 0}%)
+                        </span>
+                      </div>
+                      <div
+                        role="progressbar"
+                        aria-label="Live analysis progress"
+                        aria-valuenow={totalMoves > 0 ? Math.round((analyzedCount / totalMoves) * 100) : 0}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        className="w-full bg-gray-800 rounded-full h-2 overflow-hidden shadow-inner"
+                      >
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-600 via-blue-500 to-emerald-400 transition-all duration-300 rounded-full"
+                          style={{
+                            width: `${totalMoves > 0 ? Math.round((analyzedCount / totalMoves) * 100) : 0}%`,
+                          }}
+                        />
+                      </div>
                     </div>
                   )}
 

@@ -196,7 +196,8 @@ export function useAnalysisSession() {
               username
             )
             if (!cancelled) {
-              setGameOverview(overviewRes?.data || null)
+              const data = overviewRes?.data as any
+              setGameOverview(data?.overview || data || null)
             }
           } catch (err: any) {
             if (!cancelled) {
@@ -434,7 +435,8 @@ export function useAnalysisSession() {
           }
 
           if (overviewResult.status === 'fulfilled') {
-            setGameOverview(overviewResult.value?.data || null)
+            const data = overviewResult.value?.data as any
+            setGameOverview(data?.overview || data || null)
             setOverviewError(null)
           } else {
             const err = overviewResult.reason
@@ -467,6 +469,12 @@ export function useAnalysisSession() {
     username,
     switchRightTab,
   ])
+
+  const handleStopAnalysis = useCallback(() => {
+    abortRef.current?.abort()
+    setAnalyzing(false)
+    setTrackLatestState(false)
+  }, [setTrackLatestState])
 
   useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -513,7 +521,8 @@ export function useAnalysisSession() {
         playerColor,
         username
       )
-      setGameOverview(res?.data || null)
+      const data = res?.data as any
+      setGameOverview(data?.overview || data || null)
     } catch (err: any) {
       setOverviewError(
         err?.extractedDetail ||
@@ -611,6 +620,7 @@ export function useAnalysisSession() {
     fullAnalysis,
     maxNavigableIndex,
     handleAnalyze,
+    handleStopAnalysis,
     handleMoveClick,
     handleRequestOverview,
     handleRequestCoaching,

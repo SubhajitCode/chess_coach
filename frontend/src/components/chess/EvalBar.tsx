@@ -16,14 +16,13 @@ export default function EvalBar({ evalScore, evalCp }: EvalBarProps) {
     Math.min(max, Math.max(min, v))
 
   let isMate = false
-  let mateWinning = false
   let scoreText = '0.0'
   let whitePercent = 50
 
   if (rawScore !== null && rawScore !== undefined) {
     if (Math.abs(rawScore) >= 9000) {
       isMate = true
-      mateWinning = rawScore > 0
+      const mateWinning = rawScore > 0
       scoreText = mateWinning ? 'M' : '-M'
       whitePercent = mateWinning ? 100 : 0
     } else {

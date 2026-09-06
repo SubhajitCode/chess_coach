@@ -28,7 +28,7 @@ export function useDashboard() {
 
   const initialProfile = useMemo(() => loadLocalProfile(), [])
   const [profile, setProfile] = useState<CoachProfile>(initialProfile)
-  const [profileLoaded, setProfileLoaded] = useState(false)
+  const [profileLoaded, setProfileLoaded] = useState(() => !initialProfile.username)
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [profileSavedAt, setProfileSavedAt] = useState<number | string | null>(
@@ -74,10 +74,7 @@ export function useDashboard() {
 
   // Fetch saved profile from backend on mount
   useEffect(() => {
-    if (!profile.username) {
-      setProfileLoaded(true)
-      return
-    }
+    if (!profile.username) return
     let cancelled = false
     fetchProfile(profile.username, profile.platform)
       .then((serverProfile) => {

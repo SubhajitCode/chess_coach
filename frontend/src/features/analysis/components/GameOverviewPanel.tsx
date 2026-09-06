@@ -13,8 +13,23 @@ export default function GameOverviewPanel({
   error = null,
   onRetry,
 }: GameOverviewPanelProps) {
-  const keyMoments = overview?.key_moments || []
-  const hasOverview = !!overview?.overview
+  const inner =
+    overview && typeof (overview as any).overview === 'object'
+      ? (overview as any).overview
+      : overview
+  const overviewText =
+    typeof inner?.overview === 'string'
+      ? inner.overview
+      : typeof overview === 'string'
+      ? overview
+      : ''
+  const keyMoments: string[] =
+    (Array.isArray(inner?.key_moments)
+      ? inner.key_moments
+      : Array.isArray(overview?.key_moments)
+      ? overview?.key_moments
+      : []) || []
+  const hasOverview = Boolean(overviewText)
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-700 p-4">
@@ -56,7 +71,7 @@ export default function GameOverviewPanel({
       {hasOverview && (
         <div className="flex flex-col gap-3">
           <p className="text-sm text-gray-200 leading-relaxed">
-            {overview.overview}
+            {overviewText}
           </p>
           {keyMoments.length > 0 && (
             <div className="rounded-lg border border-gray-700 bg-gray-950/40 p-3">

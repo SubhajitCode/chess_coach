@@ -10,6 +10,7 @@ export interface GameListProps {
   username: string
   sortMode: string
   onSortChange: (mode: string) => void
+  cacheStatus?: Record<string, boolean>
 }
 
 export default function GameList({
@@ -21,6 +22,7 @@ export default function GameList({
   username,
   sortMode,
   onSortChange,
+  cacheStatus = {},
 }: GameListProps) {
   if (loading) {
     return (
@@ -118,6 +120,7 @@ export default function GameList({
           }
 
           const openingName = prettifyOpening(game.opening)
+          const isCached = Boolean(game.pgn_hash && cacheStatus[game.pgn_hash])
 
           return (
             <button
@@ -152,11 +155,18 @@ export default function GameList({
                     vs {opponent || 'Unknown Opponent'}
                   </span>
                 </div>
-                <span
-                  className={`px-2 py-0.5 rounded text-[11px] font-semibold ${resultBadge}`}
-                >
-                  {resultLabel}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`px-2 py-0.5 rounded text-[11px] font-semibold ${resultBadge}`}
+                  >
+                    {resultLabel}
+                  </span>
+                  {isCached && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/80 border border-emerald-700/60 text-emerald-400">
+                      ✓ Cached
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center justify-between text-xs text-gray-400 w-full">

@@ -190,6 +190,7 @@ async def get_deviation_coach_feedback(req: DeviationCoachRequest):
 
 
 @router.post("/coach/ask", response_model=AskCoachResponse)
+@router.post("/coaching/ask", response_model=AskCoachResponse)
 async def ask_coach_endpoint(req: AskCoachRequest):
     """Interactive Ask Coach: evaluate a position / candidate move and answer student's question."""
     if not req.fen or not req.question:

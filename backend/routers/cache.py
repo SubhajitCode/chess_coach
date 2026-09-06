@@ -28,14 +28,17 @@ def check_pgn_cache(body: dict):
     for h in pgn_hashes:
         result[h] = h in cached_hashes
 
-    return result
+    return {"cache_status": result, **result}
 
 
 @router.get("/analysis/cached/{pgn_hash}")
 @router.get("/analysis/cache/{pgn_hash}")
 def get_cached(pgn_hash: str):
     result = get_analysis(pgn_hash)
-    return {"cached": result, "found": result is not None}
+    response = {"cached": result, "found": result is not None}
+    if isinstance(result, dict):
+        response.update(result)
+    return response
 
 
 @router.delete("/analysis/cached/{pgn_hash}")

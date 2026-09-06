@@ -17,6 +17,7 @@ export default function DashboardView() {
     games,
     loading,
     error,
+    cacheStatus,
     gamesSource,
     selectedGame,
     sortMode,
@@ -121,6 +122,7 @@ export default function DashboardView() {
           username={profile.username}
           sortMode={sortMode}
           onSortChange={setSortMode}
+          cacheStatus={cacheStatus}
         />
       </main>
 
