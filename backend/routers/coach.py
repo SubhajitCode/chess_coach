@@ -63,6 +63,7 @@ async def get_coach_feedback(req: CoachRequest):
 
 
 @router.post("/coach/per-move")
+@router.post("/coaching/per-move")
 async def get_per_move_coach_feedback(req: PerMoveCoachRequest):
     """Generate per-move coaching with chunked LLM calls and persist missing entries."""
     if not req.analysis:
@@ -102,6 +103,7 @@ async def get_per_move_coach_feedback(req: PerMoveCoachRequest):
 
 
 @router.get("/coach/per-move/{pgn_hash}")
+@router.get("/coaching/per-move/{pgn_hash}")
 async def get_cached_per_move_coaching(pgn_hash: str):
     """Retrieve previously generated per-move coaching from DB."""
     coaching = get_move_coaching(pgn_hash, version=COACHING_CACHE_VERSION)
@@ -114,6 +116,7 @@ async def get_cached_per_move_coaching(pgn_hash: str):
 
 
 @router.post("/coach/overview")
+@router.post("/coaching/overview")
 async def get_game_overview_feedback(req: GameOverviewRequest):
     """Generate or retrieve cached game-level overview + key moments."""
     if not req.analysis:
@@ -141,6 +144,7 @@ async def get_game_overview_feedback(req: GameOverviewRequest):
 
 
 @router.get("/coach/overview/{pgn_hash}")
+@router.get("/coaching/overview/{pgn_hash}")
 async def get_cached_game_overview_feedback(pgn_hash: str):
     """Retrieve previously generated game-level overview from DB."""
     overview = get_cached_game_overview(pgn_hash, version=GAME_OVERVIEW_CACHE_VERSION)
@@ -153,6 +157,7 @@ async def get_cached_game_overview_feedback(pgn_hash: str):
 
 
 @router.post("/coach/deviation")
+@router.post("/coaching/deviation")
 async def get_deviation_coach_feedback(req: DeviationCoachRequest):
     """Generate AI coaching for a single deviation (exploratory alternative move)."""
     if not req.fen_before or not req.move_uci:

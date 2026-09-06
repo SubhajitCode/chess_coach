@@ -14,6 +14,7 @@ def read_profile():
 
 
 @router.put("/profile")
+@router.post("/profile")
 def update_profile(req: PlayerProfileRequest):
     if req.platform not in VALID_PLATFORMS:
         raise HTTPException(status_code=400, detail="platform must be 'chesscom' or 'lichess'")

@@ -30,3 +30,31 @@ async def get_games(
         raise HTTPException(status_code=502, detail=f"Failed to fetch games: {error_msg}")
 
     return {"games": games, "count": len(games)}
+
+
+@router.get("/games/chesscom")
+async def get_chesscom_games(
+    username: str = Query(...),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    max_games: int = Query(20, ge=1, le=100),
+):
+    return await get_games(
+        source="chesscom",
+        username=username,
+        year=year,
+        month=month,
+        max_games=max_games,
+    )
+
+
+@router.get("/games/lichess")
+async def get_lichess_games(
+    username: str = Query(...),
+    max_games: int = Query(20, ge=1, le=100),
+):
+    return await get_games(
+        source="lichess",
+        username=username,
+        max_games=max_games,
+    )

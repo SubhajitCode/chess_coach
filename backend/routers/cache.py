@@ -10,33 +10,39 @@ def get_all_cached():
 
 
 @router.post("/analysis/check-cache")
+@router.post("/analysis/cache/batch")
 def check_pgn_cache(body: dict):
-    """Check which PGNs have cached analysis. Expects {'pgns': [pgn1, pgn2, ...]}"""
+    """Check which PGNs have cached analysis. Expects {'pgns': [...]} or {'pgn_hashes': [...]}"""
     pgns = body.get("pgns", [])
-    if not isinstance(pgns, list):
-        raise HTTPException(status_code=400, detail="pgns must be a list")
-    
-    cached_hashes = set()
-    for cached_item in list_cached():
-        cached_hashes.add(cached_item["pgn_hash"])
-    
+    pgn_hashes = body.get("pgn_hashes", [])
+    if not isinstance(pgns, list) or not isinstance(pgn_hashes, list):
+        raise HTTPException(status_code=400, detail="pgns and pgn_hashes must be lists")
+
+    cached_hashes = {cached_item["pgn_hash"] for cached_item in list_cached()}
+
     result = {}
     for pgn in pgns:
         h = pgn_hash(pgn)
         result[h] = h in cached_hashes
-    
-    return {"cache_status": result}
+
+    for h in pgn_hashes:
+        result[h] = h in cached_hashes
+
+    return result
 
 
 @router.get("/analysis/cached/{pgn_hash}")
+@router.get("/analysis/cache/{pgn_hash}")
 def get_cached(pgn_hash: str):
     result = get_analysis(pgn_hash)
     return {"cached": result, "found": result is not None}
 
 
 @router.delete("/analysis/cached/{pgn_hash}")
+@router.delete("/analysis/cache/{pgn_hash}")
 def delete_cached(pgn_hash: str):
     deleted = delete_analysis(pgn_hash)
     if not deleted:
         raise HTTPException(status_code=404, detail="No cached analysis found")
     return {"deleted": True}
+
