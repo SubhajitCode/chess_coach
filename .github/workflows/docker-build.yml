@@ -31,6 +31,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Lowercase image name
+        run: |
+          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
@@ -55,6 +59,7 @@ jobs:
         run: |
           echo "Verifying no secret files were baked into the container image..."
           FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
+          docker pull "$FIRST_TAG"
           docker run --rm "$FIRST_TAG" sh -c "
             test ! -f /app/.env || (echo 'ERROR: /app/.env found!' && exit 1)
             test ! -f /app/backend/.env || (echo 'ERROR: /app/backend/.env found!' && exit 1)
