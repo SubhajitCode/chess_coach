@@ -22,7 +22,8 @@ from services.engines.common import (
 )
 from services.opening_book import is_book_move, get_book_move_details
 
-STOCKFISH_PATH = os.getenv("STOCKFISH_PATH", "/opt/homebrew/bin/stockfish")
+from services.stockfish_service import resolve_stockfish_path
+STOCKFISH_PATH = resolve_stockfish_path()
 DEFAULT_DEPTH = 18
 
 

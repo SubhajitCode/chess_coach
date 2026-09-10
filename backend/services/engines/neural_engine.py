@@ -51,6 +51,8 @@ def value_to_cp(val: float, turn: chess.Color) -> float:
 class HumanNeuralEngine(BaseChessEngine):
     def __init__(self, model_path: Optional[str] = None):
         self.device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+        if self.device.type == "cpu":
+            torch.set_num_threads(1)
         self.model_path = None
         self.model = None
         self._load_model(model_path)

@@ -8,7 +8,18 @@ from typing import Generator
 from models import MoveAnalysis, GameSummary, AnalysisResult
 from services.opening_book import is_book_move, get_book_move_details
 
-STOCKFISH_PATH = os.getenv("STOCKFISH_PATH", "/opt/homebrew/bin/stockfish")
+def resolve_stockfish_path() -> str:
+    path = os.getenv("STOCKFISH_PATH", "")
+    if path and os.path.exists(path):
+        return path
+    for candidate in ["/usr/games/stockfish", "/usr/bin/stockfish", "/opt/homebrew/bin/stockfish"]:
+        if os.path.exists(candidate):
+            return candidate
+    import shutil
+    return shutil.which("stockfish") or path or "/usr/games/stockfish"
+
+
+STOCKFISH_PATH = resolve_stockfish_path()
 DEFAULT_DEPTH = 18
 PV_PREVIEW_LENGTH = 4
 PIECE_NAMES = {

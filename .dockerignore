@@ -1,0 +1,36 @@
+# Version control & IDE
+.git
+.github
+.vscode
+.claude
+.playwright
+.playwright-cli
+.pytest_cache
+.DS_Store
+
+# CRITICAL SECURITY: Never copy any env file or secret into Docker
+**/.env
+**/.env.*
+**/*.env
+!**/.env.example
+
+# Frontend build & dependencies
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Backend virtual environments, caches, and databases
+backend/venv/
+backend/.venv/
+venv/
+.venv/
+**/__pycache__/
+**/*.py[cod]
+backend/chess_analyzer.db
+chess_analyzer.db
+backend/data/*.db
+
+# Training scratch data & notebooks
+training/data/
+training/.ipynb_checkpoints/
+*.ipynb
