@@ -46,8 +46,8 @@ COPY backend/ ./
 # Copy built frontend assets from Stage 1 into the backend static directory
 COPY --from=frontend-builder /app/frontend/dist ./static
 
-# Optionally copy model checkpoint if present in build context
-COPY training/models* /app/models/
+# Copy model directory (includes .gitkeep and optionally trained checkpoint)
+COPY training/models/ /app/models/
 
 EXPOSE 8000
 

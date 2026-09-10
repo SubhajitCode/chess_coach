@@ -27,7 +27,9 @@ venv/
 *.tar.gz
 *.zip
 training/data/
-training/models/
+training/models/*
+!training/models/.gitkeep
+!training/models/best_chess_policy_model.pt
 backend/models/
 
 # Node
