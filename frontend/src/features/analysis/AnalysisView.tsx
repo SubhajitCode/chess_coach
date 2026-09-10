@@ -133,9 +133,9 @@ export default function AnalysisView() {
       <main className="flex-1 lg:overflow-hidden min-h-0 overflow-y-auto">
         <div className="h-full max-w-7xl mx-auto px-3 sm:px-6 py-3 sm:py-4 flex flex-col lg:flex-row gap-4 lg:gap-6">
           {/* Left: Board Column */}
-          <div className="w-full max-w-[550px] mx-auto lg:mx-0 lg:w-[550px] flex flex-col gap-2 flex-shrink-0 lg:overflow-y-auto">
+          <div className="w-full max-w-[min(550px,calc(100vh-200px))] mx-auto lg:mx-0 flex flex-col gap-2 flex-shrink-0 lg:overflow-y-auto">
             {/* Opponent label */}
-            <div className="flex items-center gap-2 px-1 ml-7">
+            <div className="flex items-center gap-2 px-1 ml-[30px]">
               <div
                 className={`w-4 h-4 rounded-sm flex-shrink-0 ${
                   playerColor === 'white'
@@ -153,7 +153,7 @@ export default function AnalysisView() {
               <EvalBar evalScore={currentEval} />
 
               {/* Board */}
-              <div className="w-full max-w-[520px] aspect-square rounded-xl overflow-hidden border border-gray-700 shadow-2xl relative flex-1 min-w-0">
+              <div className="w-full max-w-[min(520px,calc(100vh-230px))] aspect-square rounded-xl overflow-hidden border border-gray-700 shadow-2xl relative flex-1 min-w-0">
                 {bestLinePreview && !exploreMode && (
                   <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-3 py-1 bg-emerald-900/90 border border-emerald-600 rounded-full text-[11px] text-emerald-300 font-medium pointer-events-none">
                     Previewing best line
@@ -199,7 +199,7 @@ export default function AnalysisView() {
             </div>
 
             {/* Player label */}
-            <div className="flex items-center gap-2 px-1 ml-7">
+            <div className="flex items-center gap-2 px-1 ml-[30px]">
               <div
                 className={`w-4 h-4 rounded-sm flex-shrink-0 ${
                   playerColor === 'white'
@@ -244,7 +244,7 @@ export default function AnalysisView() {
               <button
                 type="button"
                 onClick={exploreMode ? handleExitExplore : handleEnterExplore}
-                className={`text-xs py-1.5 px-3 rounded-lg border transition-colors text-center ml-7 cursor-pointer ${
+                className={`text-xs py-1.5 px-3 rounded-lg border transition-colors text-center ml-[30px] cursor-pointer ${
                   exploreMode
                     ? 'border-purple-500 text-purple-300 bg-purple-900/30 hover:bg-purple-900/50'
                     : 'border-gray-600 text-gray-400 hover:border-purple-500 hover:text-purple-300'
@@ -256,7 +256,7 @@ export default function AnalysisView() {
 
             {/* Move classification badge */}
             {currentMove && currentMove.classification && (
-              <div className="flex items-center gap-2 px-1 ml-7">
+              <div className="flex items-center gap-2 px-1 ml-[30px]">
                 <span
                   className={`px-3 py-1 rounded-full text-xs font-bold ${
                     CLASSIFICATION_BADGE[currentMove.classification]?.color ||
@@ -304,7 +304,7 @@ export default function AnalysisView() {
                     setCurrentIndex(streamedMoves.length - 1)
                   }
                 }}
-                className={`text-xs py-1.5 px-3 rounded-lg border transition-colors text-center ml-7 cursor-pointer ${
+                className={`text-xs py-1.5 px-3 rounded-lg border transition-colors text-center ml-[30px] cursor-pointer ${
                   trackLatest
                     ? 'border-blue-500 text-blue-400 bg-blue-900/20'
                     : 'border-gray-600 text-gray-500 hover:border-gray-400 hover:text-gray-400'
@@ -315,7 +315,7 @@ export default function AnalysisView() {
             )}
 
             {!analyzing && streamedMoves.length === 0 && (
-              <div className="text-center text-xs text-gray-500 py-1 ml-7">
+              <div className="text-center text-xs text-gray-500 py-1 ml-[30px]">
                 ← Use arrow keys or click moves to navigate
               </div>
             )}
@@ -420,15 +420,19 @@ export default function AnalysisView() {
                     </div>
                   )}
 
-                  {(streamedMoves.length > 0 ||
-                    overviewLoading ||
-                    overviewError ||
-                    gameOverview) && (
-                    <GameOverviewPanel
-                      overview={gameOverview}
-                      loading={overviewLoading}
-                      error={overviewError}
-                      onRetry={handleRequestOverview}
+                  {streamedMoves.length > 0 && (
+                    <EvalChart
+                      moves={streamedMoves}
+                      currentIndex={currentIndex}
+                      onMoveClick={handleMoveClick}
+                    />
+                  )}
+
+                  {streamedMoves.length > 0 && (
+                    <MoveTable
+                      moves={streamedMoves}
+                      currentIndex={currentIndex}
+                      onMoveClick={handleMoveClick}
                     />
                   )}
 
@@ -448,19 +452,15 @@ export default function AnalysisView() {
                     />
                   )}
 
-                  {streamedMoves.length > 0 && (
-                    <EvalChart
-                      moves={streamedMoves}
-                      currentIndex={currentIndex}
-                      onMoveClick={handleMoveClick}
-                    />
-                  )}
-
-                  {streamedMoves.length > 0 && (
-                    <MoveTable
-                      moves={streamedMoves}
-                      currentIndex={currentIndex}
-                      onMoveClick={handleMoveClick}
+                  {(streamedMoves.length > 0 ||
+                    overviewLoading ||
+                    overviewError ||
+                    gameOverview) && (
+                    <GameOverviewPanel
+                      overview={gameOverview}
+                      loading={overviewLoading}
+                      error={overviewError}
+                      onRetry={handleRequestOverview}
                     />
                   )}
 

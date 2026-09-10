@@ -161,10 +161,8 @@ export default function PracticeView() {
 
               {/* Board container */}
               <div className="w-full max-w-[540px] mx-auto lg:max-w-[min(900px,calc(100vw-420px))]">
-                <div className="flex items-start gap-2 sm:gap-4 aspect-square">
-                  <div className="w-7 sm:w-8 flex-shrink-0 h-full flex items-center justify-center">
-                    <EvalBar evalScore={currentEvalScore} />
-                  </div>
+                <div className="flex items-stretch gap-2 sm:gap-4 w-full">
+                  <EvalBar evalScore={currentEvalScore} />
                   <div
                     className={`flex-1 aspect-square rounded-xl overflow-hidden border shadow-2xl transition-all duration-300 mx-auto ${
                       shake

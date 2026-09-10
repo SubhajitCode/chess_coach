@@ -4,13 +4,19 @@ export interface EvalBarProps {
   evalScore?: number | null
   evalCp?: number | null
   playerColor?: PlayerColor
+  className?: string
 }
 
 /**
  * EvalBar renders a vertical evaluation gauge for White vs Black in centipawns.
  * Supports both evalScore and evalCp props to maintain backward compatibility.
  */
-export default function EvalBar({ evalScore, evalCp }: EvalBarProps) {
+export default function EvalBar({
+  evalScore,
+  evalCp,
+  playerColor: _playerColor,
+  className = '',
+}: EvalBarProps) {
   const rawScore = evalScore !== undefined ? evalScore : evalCp
   const clamp = (v: number, min: number, max: number) =>
     Math.min(max, Math.max(min, v))
@@ -35,8 +41,8 @@ export default function EvalBar({ evalScore, evalCp }: EvalBarProps) {
 
   return (
     <div
-      className="flex flex-col items-center select-none flex-shrink-0"
-      style={{ width: 22, height: '100%', minHeight: 180 }}
+      className={`flex flex-col items-center select-none flex-shrink-0 self-stretch ${className}`}
+      style={{ width: 22 }}
     >
       <div className="relative w-full flex-1 rounded overflow-hidden bg-[#262421] border border-gray-700/80 shadow-inner flex flex-col justify-end">
         {/* White portion */}

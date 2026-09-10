@@ -9,6 +9,7 @@ export interface BoardNavigationProps {
   onPrev: () => void
   onNext: () => void
   onLast: () => void
+  className?: string
 }
 
 export default function BoardNavigation({
@@ -19,6 +20,7 @@ export default function BoardNavigation({
   onPrev,
   onNext,
   onLast,
+  className = 'ml-[30px]',
 }: BoardNavigationProps) {
   const atStart = activeIndex <= -1
   const atEnd = activeIndex >= maxNavigableIndex
@@ -37,7 +39,7 @@ export default function BoardNavigation({
       : `Move ${activeIndex + 1}`
 
   return (
-    <div className="flex flex-col gap-2 ml-7">
+    <div className={`flex flex-col gap-2 ${className}`}>
       <div className="flex items-center justify-between text-xs text-gray-400 px-1 font-mono">
         <span className="truncate">{label}</span>
         <span>

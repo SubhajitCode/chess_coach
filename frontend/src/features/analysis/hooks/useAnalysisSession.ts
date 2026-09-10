@@ -362,6 +362,10 @@ export function useAnalysisSession() {
     handleExitExplore()
     setRightTab('moves')
 
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+
     const collectedMovesRef: { current: ChessMove[] } = { current: [] }
     const collectedSummaryRef: { current: GameSummary | null } = { current: null }
     const collectedMetaRef: { current: AnalyzeStreamMeta | null } = { current: null }
