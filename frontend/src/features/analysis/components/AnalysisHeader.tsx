@@ -44,37 +44,39 @@ export default function AnalysisHeader({
 
   return (
     <header className="border-b border-gray-800 bg-gray-900">
-      <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="text-gray-400 hover:text-white transition-colors text-sm flex items-center gap-1 cursor-pointer"
-        >
-          ← Back
-        </button>
-        <div className="w-px h-5 bg-gray-700" />
-        <span className="text-2xl">♛</span>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-sm font-bold text-white truncate">
-            {game?.white} vs {game?.black}
-          </h1>
-          <p className="text-xs text-gray-400 truncate">
-            {game?.result} · {game?.time_control} ·{' '}
-            {prettifyOpening(gameMeta?.opening || game?.opening) ||
-              'Unknown opening'}
-          </p>
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5 sm:py-3 flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-gray-400 hover:text-white transition-colors text-sm flex items-center gap-1 cursor-pointer flex-shrink-0"
+          >
+            ← Back
+          </button>
+          <div className="w-px h-4 bg-gray-700 flex-shrink-0" />
+          <span className="text-xl sm:text-2xl flex-shrink-0">♛</span>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xs sm:text-sm font-bold text-white truncate">
+              {game?.white} vs {game?.black}
+            </h1>
+            <p className="text-[11px] sm:text-xs text-gray-400 truncate">
+              {game?.result} · {game?.time_control} ·{' '}
+              {prettifyOpening(gameMeta?.opening || game?.opening) ||
+                'Unknown opening'}
+            </p>
+          </div>
         </div>
 
-        {/* Depth + Engine + Analyze */}
-        <div className="flex items-center gap-2">
+        {/* Controls row: Engine, Depth, Arrows, Cache, Analyze */}
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap overflow-x-auto pb-0.5 md:pb-0">
           {fromCache && (
-            <span className="px-2 py-0.5 text-xs rounded-full bg-emerald-800/50 border border-emerald-600 text-emerald-400">
+            <span className="px-2 py-0.5 text-[11px] rounded-full bg-emerald-800/50 border border-emerald-600 text-emerald-400 flex-shrink-0">
               ✓ Cached
             </span>
           )}
 
           {/* Engine Selector */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             <label htmlFor="analysis-engine-select" className="text-xs text-gray-400">
               Engine
             </label>
@@ -83,7 +85,7 @@ export default function AnalysisHeader({
               value={selectedEngine}
               onChange={(e) => setSelectedEngine(e.target.value)}
               disabled={analyzing}
-              className="bg-gray-800 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none disabled:opacity-50 font-medium"
+              className="bg-gray-800 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none disabled:opacity-50 font-medium max-w-[140px] sm:max-w-none truncate"
               title="Select Analysis Engine"
             >
               {availableEngines.length > 0 ? (
@@ -103,7 +105,7 @@ export default function AnalysisHeader({
           </div>
 
           {selectedEngine === 'stockfish' && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-shrink-0">
               <label htmlFor="analysis-depth-select" className="text-xs text-gray-400">
                 Depth
               </label>
@@ -123,7 +125,7 @@ export default function AnalysisHeader({
             </div>
           )}
 
-          <div className="flex items-center gap-1.5 ml-2 mr-2">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
               type="button"
               onClick={() => setShowArrows(!showArrows)}
@@ -141,7 +143,7 @@ export default function AnalysisHeader({
             type="button"
             onClick={onAnalyze}
             disabled={analyzing}
-            className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-all shadow cursor-pointer disabled:cursor-not-allowed"
+            className="px-3.5 sm:px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-all shadow cursor-pointer disabled:cursor-not-allowed flex-shrink-0 ml-auto md:ml-0"
           >
             {analyzing ? 'Analyzing…' : '▶ Analyze'}
           </button>
@@ -149,14 +151,14 @@ export default function AnalysisHeader({
       </div>
 
       {analyzing && (
-        <div className="border-t border-gray-800 bg-gray-950/80 px-6 py-2.5">
-          <div className="max-w-7xl mx-auto flex items-center gap-4">
+        <div className="border-t border-gray-800 bg-gray-950/80 px-3 sm:px-6 py-2">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
             <div className="flex items-center gap-2 text-xs text-blue-400 font-medium whitespace-nowrap">
-              <span className="relative flex h-2.5 w-2.5">
+              <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
               </span>
-              <span>
+              <span className="truncate">
                 Evaluating with{' '}
                 <span className="text-white font-semibold">
                   {availableEngines.find((e) => e.id === selectedEngine)?.name || selectedEngine}
@@ -164,38 +166,40 @@ export default function AnalysisHeader({
               </span>
             </div>
 
-            <div
-              role="progressbar"
-              aria-label="Game analysis progress"
-              aria-valuenow={progressPercent}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              className="flex-1 bg-gray-800 rounded-full h-2.5 overflow-hidden shadow-inner border border-gray-700/60 relative"
-            >
+            <div className="flex items-center gap-3 flex-1 w-full">
               <div
-                className="h-full bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-400 transition-all duration-300 rounded-full"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-
-            <div className="flex items-center gap-2 text-xs font-mono text-gray-300 whitespace-nowrap">
-              <span>
-                {analyzedCount} / {totalMoves} moves
-              </span>
-              <span className="px-1.5 py-0.5 rounded bg-blue-950/80 border border-blue-700/60 text-blue-300 font-semibold text-[11px]">
-                {progressPercent}%
-              </span>
-            </div>
-
-            {onStop && (
-              <button
-                type="button"
-                onClick={onStop}
-                className="px-2.5 py-1 bg-red-950/80 hover:bg-red-900 border border-red-700/70 text-red-300 rounded-md text-xs font-semibold transition-colors cursor-pointer"
+                role="progressbar"
+                aria-label="Game analysis progress"
+                aria-valuenow={progressPercent}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                className="flex-1 bg-gray-800 rounded-full h-2.5 overflow-hidden shadow-inner border border-gray-700/60 relative"
               >
-                Stop
-              </button>
-            )}
+                <div
+                  className="h-full bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-400 transition-all duration-300 rounded-full"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+
+              <div className="flex items-center gap-2 text-xs font-mono text-gray-300 whitespace-nowrap flex-shrink-0">
+                <span>
+                  {analyzedCount} / {totalMoves} moves
+                </span>
+                <span className="px-1.5 py-0.5 rounded bg-blue-950/80 border border-blue-700/60 text-blue-300 font-semibold text-[11px]">
+                  {progressPercent}%
+                </span>
+              </div>
+
+              {onStop && (
+                <button
+                  type="button"
+                  onClick={onStop}
+                  className="px-2.5 py-1 bg-red-950/80 hover:bg-red-900 border border-red-700/70 text-red-300 rounded-md text-xs font-semibold transition-colors cursor-pointer flex-shrink-0"
+                >
+                  Stop
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -42,38 +42,53 @@ export default function DashboardView() {
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
       {/* Top Header */}
       <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-3xl">♟</span>
-            <div>
-              <h1 className="text-lg font-bold text-white tracking-wide">
-                Chess Coach & Analyzer
-              </h1>
-              <p className="text-xs text-gray-400">
-                Turn your blunders into breakthroughs
-              </p>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl sm:text-3xl">♟</span>
+              <div>
+                <h1 className="text-base sm:text-lg font-bold text-white tracking-wide">
+                  Chess Coach & Analyzer
+                </h1>
+                <p className="text-[11px] sm:text-xs text-gray-400">
+                  Turn your blunders into breakthroughs
+                </p>
+              </div>
+            </div>
+
+            {/* Profile setup button on mobile */}
+            <div className="sm:hidden">
+              <button
+                type="button"
+                onClick={() => setProfileModalOpen(true)}
+                className="px-2.5 py-1.5 text-xs text-blue-400 border border-blue-900/60 rounded-lg hover:bg-blue-950/40 transition-colors cursor-pointer flex items-center gap-1"
+                title="Profile Settings"
+              >
+                <span>👤</span>
+                <span className="max-w-[90px] truncate">{profile.username || 'Profile'}</span>
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button
               type="button"
               onClick={() => navigate('/play')}
-              className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-all shadow flex items-center gap-1.5 cursor-pointer"
+              className="flex-1 sm:flex-none justify-center px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-all shadow flex items-center gap-1.5 cursor-pointer min-h-[34px]"
             >
               <span>⚔️</span> Sparring Arena
             </button>
             <button
               type="button"
               onClick={() => setShowPasteModal(true)}
-              className="px-3 py-1.5 text-xs text-gray-300 hover:text-white border border-gray-700 rounded-lg hover:border-gray-500 transition-colors cursor-pointer"
+              className="flex-1 sm:flex-none justify-center px-3 py-1.5 text-xs text-gray-300 hover:text-white border border-gray-700 rounded-lg hover:border-gray-500 transition-colors cursor-pointer min-h-[34px]"
             >
               Paste PGN
             </button>
             <button
               type="button"
               onClick={() => setProfileModalOpen(true)}
-              className="px-3 py-1.5 text-xs text-blue-400 border border-blue-900/60 rounded-lg hover:bg-blue-950/40 transition-colors cursor-pointer"
+              className="hidden sm:inline-flex items-center px-3 py-1.5 text-xs text-blue-400 border border-blue-900/60 rounded-lg hover:bg-blue-950/40 transition-colors cursor-pointer min-h-[34px]"
             >
               {profile.username ? `Coach: ${profile.username}` : 'Setup Profile'}
             </button>
@@ -82,7 +97,7 @@ export default function DashboardView() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 flex flex-col gap-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-8 flex flex-col gap-4 sm:gap-6">
         <ResumeSessionCard
           lastSession={lastSession}
           onResume={handleResumeSession}
@@ -128,14 +143,14 @@ export default function DashboardView() {
 
       {/* Profile Modal */}
       {profileModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-gray-900 border border-gray-700 rounded-2xl p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-3 sm:p-4">
+          <div className="w-full max-w-md bg-gray-900 border border-gray-700 rounded-2xl p-4 sm:p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-bold text-white">Coaching Profile</h2>
               <button
                 type="button"
                 onClick={() => setProfileModalOpen(false)}
-                className="text-gray-400 hover:text-white text-sm cursor-pointer"
+                className="text-gray-400 hover:text-white text-sm p-1 cursor-pointer"
               >
                 ✕
               </button>
@@ -153,14 +168,14 @@ export default function DashboardView() {
 
       {/* Paste PGN Modal */}
       {showPasteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="w-full max-w-lg bg-gray-900 border border-gray-700 rounded-2xl p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-3 sm:p-4">
+          <div className="w-full max-w-lg bg-gray-900 border border-gray-700 rounded-2xl p-4 sm:p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-bold text-white">Analyze Custom PGN</h2>
               <button
                 type="button"
                 onClick={() => setShowPasteModal(false)}
-                className="text-gray-400 hover:text-white text-sm cursor-pointer"
+                className="text-gray-400 hover:text-white text-sm p-1 cursor-pointer"
               >
                 ✕
               </button>
@@ -172,15 +187,15 @@ export default function DashboardView() {
               onChange={(e) => setCustomPgn(e.target.value)}
               className="w-full rounded-xl border border-gray-700 bg-gray-800 p-3 text-xs text-gray-100 font-mono placeholder-gray-500 focus:border-blue-500 focus:outline-none"
             />
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-xs text-gray-400">
                 <span>Analyze as:</span>
                 <button
                   type="button"
                   onClick={() => setPlayerColor('white')}
-                  className={`px-2.5 py-1 rounded-md font-medium cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-md font-medium cursor-pointer ${
                     playerColor === 'white'
-                      ? 'bg-blue-600 text-white'
+                       ? 'bg-blue-600 text-white'
                       : 'bg-gray-800 text-gray-400'
                   }`}
                 >
@@ -189,7 +204,7 @@ export default function DashboardView() {
                 <button
                   type="button"
                   onClick={() => setPlayerColor('black')}
-                  className={`px-2.5 py-1 rounded-md font-medium cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-md font-medium cursor-pointer ${
                     playerColor === 'black'
                       ? 'bg-blue-600 text-white'
                       : 'bg-gray-800 text-gray-400'
@@ -202,7 +217,7 @@ export default function DashboardView() {
                 <button
                   type="button"
                   onClick={() => setShowPasteModal(false)}
-                  className="px-3 py-1.5 text-xs text-gray-400 hover:text-white cursor-pointer"
+                  className="flex-1 sm:flex-none px-3 py-2 text-xs text-gray-400 hover:text-white border border-gray-700 sm:border-transparent rounded-lg cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -210,7 +225,7 @@ export default function DashboardView() {
                   type="button"
                   onClick={handleAnalyzeCustomPgn}
                   disabled={!customPgn.trim()}
-                  className="px-4 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium rounded-lg transition-colors cursor-pointer"
+                  className="flex-1 sm:flex-none px-4 py-2 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium rounded-lg transition-colors cursor-pointer"
                 >
                   Analyze
                 </button>

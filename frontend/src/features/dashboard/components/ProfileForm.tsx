@@ -47,7 +47,7 @@ export default function ProfileForm({
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label htmlFor="pf-platform" className="text-xs uppercase tracking-wider text-gray-400 font-medium block mb-1">
             Platform
@@ -92,7 +92,7 @@ export default function ProfileForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label htmlFor="pf-goal" className="text-xs uppercase tracking-wider text-gray-400 font-medium block mb-1">
             Improvement Goal

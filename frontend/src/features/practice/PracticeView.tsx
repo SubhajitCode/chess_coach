@@ -142,10 +142,10 @@ export default function PracticeView() {
           onBack={() => navigate(-1)}
         />
 
-        <main className="flex-1 flex items-center justify-center p-4">
-          <div className="grid gap-8 items-start w-full max-w-screen-2xl mx-auto grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+        <main className="flex-1 flex items-start justify-center p-2 sm:p-4">
+          <div className="grid gap-4 sm:gap-8 items-start w-full max-w-screen-2xl mx-auto grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
             {/* Board Column */}
-            <div className="flex flex-col items-center gap-3 flex-shrink-0">
+            <div className="flex flex-col items-center gap-3 w-full max-w-[540px] mx-auto flex-shrink-0">
               <div className="flex items-center gap-2 w-full">
                 <div
                   className={`w-4 h-4 rounded-sm border flex-shrink-0 ${
@@ -160,12 +160,9 @@ export default function PracticeView() {
               </div>
 
               {/* Board container */}
-              <div
-                className="w-full"
-                style={{ maxWidth: 'min(900px, calc(100vw - 420px))' }}
-              >
-                <div className="flex items-start gap-4 aspect-square">
-                  <div className="w-14 flex-shrink-0 h-full flex items-center justify-center">
+              <div className="w-full max-w-[540px] mx-auto lg:max-w-[min(900px,calc(100vw-420px))]">
+                <div className="flex items-start gap-2 sm:gap-4 aspect-square">
+                  <div className="w-7 sm:w-8 flex-shrink-0 h-full flex items-center justify-center">
                     <EvalBar evalScore={currentEvalScore} />
                   </div>
                   <div
@@ -226,12 +223,12 @@ export default function PracticeView() {
                 </span>
               </div>
 
-              <div className="grid grid-cols-3 gap-2 w-full">
+              <div className="grid grid-cols-3 gap-1.5 sm:gap-2 w-full">
                 <button
                   type="button"
                   onClick={handleReviewPrev}
                   disabled={reviewIndex <= -1}
-                  className="py-2 text-xs font-medium text-gray-300 border border-gray-700 rounded-lg hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  className="py-2 text-[11px] sm:text-xs font-medium text-gray-300 border border-gray-700 rounded-lg hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer min-h-[36px]"
                 >
                   ← Prev move
                 </button>
@@ -239,7 +236,7 @@ export default function PracticeView() {
                   type="button"
                   onClick={handleResetToPuzzlePosition}
                   disabled={isPuzzlePosition}
-                  className="py-2 text-xs font-medium text-gray-200 border border-gray-600 rounded-lg hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  className="py-2 text-[11px] sm:text-xs font-medium text-gray-200 border border-gray-600 rounded-lg hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer min-h-[36px]"
                 >
                   Puzzle position
                 </button>
@@ -247,7 +244,7 @@ export default function PracticeView() {
                   type="button"
                   onClick={handleReviewNext}
                   disabled={reviewIndex >= moves.length - 1}
-                  className="py-2 text-xs font-medium text-gray-300 border border-gray-700 rounded-lg hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  className="py-2 text-[11px] sm:text-xs font-medium text-gray-300 border border-gray-700 rounded-lg hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer min-h-[36px]"
                 >
                   Next move →
                 </button>

@@ -22,7 +22,7 @@ export default function Tabs({
 }: TabsProps) {
   return (
     <div
-      className={`flex items-center gap-1 border-b border-gray-800 bg-gray-900/80 px-2 py-1 ${className}`}
+      className={`flex items-center gap-1 border-b border-gray-800 bg-gray-900/80 px-2 py-1 overflow-x-auto ${className}`}
     >
       {tabs.map((tab) => {
         const isActive = tab.id === activeTab
@@ -31,7 +31,7 @@ export default function Tabs({
             key={tab.id}
             type="button"
             onClick={() => onTabChange(tab.id)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer flex-shrink-0 ${
               isActive
                 ? 'bg-gray-800 text-white shadow-sm border border-gray-700'
                 : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/40 border border-transparent'

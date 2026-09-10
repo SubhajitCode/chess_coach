@@ -44,12 +44,12 @@ export default function BoardNavigation({
           {activeIndex + 1} / {maxNavigableIndex + 1}
         </span>
       </div>
-      <div className="grid grid-cols-4 gap-1 bg-gray-900 border border-gray-700 rounded-xl p-1">
+      <div className="grid grid-cols-4 gap-1.5 sm:gap-1 bg-gray-900 border border-gray-700 rounded-xl p-1.5 sm:p-1">
         <button
           type="button"
           onClick={onFirst}
           disabled={atStart}
-          className="py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-sm text-gray-200 transition-colors cursor-pointer"
+          className="min-h-[40px] py-2 sm:py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-base sm:text-sm text-gray-200 transition-colors cursor-pointer flex items-center justify-center"
           title="Go to game start"
         >
           ⏮
@@ -58,7 +58,7 @@ export default function BoardNavigation({
           type="button"
           onClick={onPrev}
           disabled={atStart}
-          className="py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-sm text-gray-200 transition-colors cursor-pointer"
+          className="min-h-[40px] py-2 sm:py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-base sm:text-sm text-gray-200 transition-colors cursor-pointer flex items-center justify-center"
           title="Previous move (Left arrow)"
         >
           ◀
@@ -67,7 +67,7 @@ export default function BoardNavigation({
           type="button"
           onClick={onNext}
           disabled={atEnd}
-          className="py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-sm text-gray-200 transition-colors cursor-pointer"
+          className="min-h-[40px] py-2 sm:py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-base sm:text-sm text-gray-200 transition-colors cursor-pointer flex items-center justify-center"
           title="Next move (Right arrow)"
         >
           ▶
@@ -76,7 +76,7 @@ export default function BoardNavigation({
           type="button"
           onClick={onLast}
           disabled={atEnd}
-          className="py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-sm text-gray-200 transition-colors cursor-pointer"
+          className="min-h-[40px] py-2 sm:py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-base sm:text-sm text-gray-200 transition-colors cursor-pointer flex items-center justify-center"
           title="Go to latest move"
         >
           ⏭

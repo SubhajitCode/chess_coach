@@ -28,11 +28,11 @@ export default function SparringToolbar({
 }: SparringToolbarProps) {
   return (
     <div className="w-full max-w-[500px] flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-1.5 sm:gap-2">
         <button
           type="button"
           onClick={onNewGame}
-          className="flex-1 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold transition border border-gray-700 cursor-pointer"
+          className="flex-1 min-h-[38px] py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold transition border border-gray-700 cursor-pointer flex items-center justify-center"
         >
           🔄 New Game
         </button>
@@ -40,7 +40,7 @@ export default function SparringToolbar({
           type="button"
           onClick={onTakeback}
           disabled={historyLength === 0 || aiThinking}
-          className="flex-1 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-gray-200 text-xs font-semibold transition border border-gray-700 cursor-pointer disabled:cursor-not-allowed"
+          className="flex-1 min-h-[38px] py-2 rounded-xl bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-gray-200 text-xs font-semibold transition border border-gray-700 cursor-pointer disabled:cursor-not-allowed flex items-center justify-center"
         >
           ⏪ Takeback
         </button>
@@ -48,19 +48,19 @@ export default function SparringToolbar({
           type="button"
           onClick={onResign}
           disabled={!!gameOver}
-          className="flex-1 py-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 disabled:opacity-40 text-red-300 text-xs font-semibold transition border border-red-800/60 cursor-pointer disabled:cursor-not-allowed"
+          className="flex-1 min-h-[38px] py-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 disabled:opacity-40 text-red-300 text-xs font-semibold transition border border-red-800/60 cursor-pointer disabled:cursor-not-allowed flex items-center justify-center"
         >
           🏳️ Resign
         </button>
       </div>
 
       {/* Quick Stockfish Analyze Row */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <button
           type="button"
           onClick={() => onAnalyzeAi(aiColor)}
           disabled={historyLength === 0}
-          className="py-2 px-3 rounded-xl bg-purple-900/40 hover:bg-purple-800/60 border border-purple-600/50 disabled:opacity-30 disabled:cursor-not-allowed text-purple-200 text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow cursor-pointer"
+          className="min-h-[38px] py-2 px-3 rounded-xl bg-purple-900/40 hover:bg-purple-800/60 border border-purple-600/50 disabled:opacity-30 disabled:cursor-not-allowed text-purple-200 text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow cursor-pointer"
         >
           🤖 Analyze AI with Stockfish
         </button>
@@ -68,7 +68,7 @@ export default function SparringToolbar({
           type="button"
           onClick={() => onAnalyzePlayer(playerColor)}
           disabled={historyLength === 0}
-          className="py-2 px-3 rounded-xl bg-blue-900/40 hover:bg-blue-800/60 border border-blue-600/50 disabled:opacity-30 disabled:cursor-not-allowed text-blue-200 text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow cursor-pointer"
+          className="min-h-[38px] py-2 px-3 rounded-xl bg-blue-900/40 hover:bg-blue-800/60 border border-blue-600/50 disabled:opacity-30 disabled:cursor-not-allowed text-blue-200 text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow cursor-pointer"
         >
           👤 Analyze My Play
         </button>

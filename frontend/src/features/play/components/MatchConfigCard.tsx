@@ -24,7 +24,7 @@ export default function MatchConfigCard({
         <span>⚙️</span> Sparring Settings
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {/* Opponent Selection */}
         <div>
           <label htmlFor="play-opponent-select" className="text-[11px] font-medium text-gray-400 mb-1 block">
@@ -34,7 +34,7 @@ export default function MatchConfigCard({
             id="play-opponent-select"
             value={engine}
             onChange={(e) => setEngine(e.target.value)}
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-purple-500 font-medium"
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-200 focus:outline-none focus:border-purple-500 font-medium"
           >
             <option value="human_model">🧠 Human AI Model (1400–1800)</option>
             <option value="hybrid">♟️ Hybrid Coach (Stockfish + Neural)</option>
@@ -47,11 +47,11 @@ export default function MatchConfigCard({
           <span className="text-[11px] font-medium text-gray-400 mb-1 block">
             Play As
           </span>
-          <div className="grid grid-cols-2 gap-1 bg-gray-800 p-0.5 rounded-lg border border-gray-700">
+          <div className="grid grid-cols-2 gap-1 bg-gray-800 p-0.5 rounded-lg border border-gray-700 min-h-[36px]">
             <button
               type="button"
               onClick={() => onColorChange('white')}
-              className={`py-1 text-xs font-semibold rounded cursor-pointer ${
+              className={`py-1.5 text-xs font-semibold rounded cursor-pointer flex items-center justify-center ${
                 playerColor === 'white'
                   ? 'bg-blue-600 text-white'
                   : 'text-gray-400 hover:text-gray-200'
@@ -62,7 +62,7 @@ export default function MatchConfigCard({
             <button
               type="button"
               onClick={() => onColorChange('black')}
-              className={`py-1 text-xs font-semibold rounded cursor-pointer ${
+              className={`py-1.5 text-xs font-semibold rounded cursor-pointer flex items-center justify-center ${
                 playerColor === 'black'
                   ? 'bg-blue-600 text-white'
                   : 'text-gray-400 hover:text-gray-200'
@@ -83,7 +83,7 @@ export default function MatchConfigCard({
               {temperature.toFixed(2)}
             </span>
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
             {STYLES.map((s) => (
               <button
                 key={s.id}

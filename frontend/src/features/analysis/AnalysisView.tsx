@@ -101,7 +101,7 @@ export default function AnalysisView() {
   ]
 
   return (
-    <div className="h-screen bg-gray-950 text-gray-100 flex flex-col overflow-hidden">
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden bg-gray-950 text-gray-100 flex flex-col">
       <AnalysisHeader
         game={game}
         gameMeta={gameMeta}
@@ -123,17 +123,17 @@ export default function AnalysisView() {
 
       {/* Error Banner */}
       {analyzeError && (
-        <div className="flex-shrink-0 px-6 pt-2 max-w-7xl w-full mx-auto">
+        <div className="flex-shrink-0 px-3 sm:px-6 pt-2 max-w-7xl w-full mx-auto">
           <div className="p-3 bg-red-900/30 border border-red-700 rounded-xl text-red-400 text-sm">
             {analyzeError}
           </div>
         </div>
       )}
 
-      <main className="flex-1 overflow-hidden min-h-0">
-        <div className="h-full max-w-7xl mx-auto px-6 py-4 flex gap-6">
+      <main className="flex-1 lg:overflow-hidden min-h-0 overflow-y-auto">
+        <div className="h-full max-w-7xl mx-auto px-3 sm:px-6 py-3 sm:py-4 flex flex-col lg:flex-row gap-4 lg:gap-6">
           {/* Left: Board Column */}
-          <div className="flex flex-col gap-2 flex-shrink-0 overflow-y-auto">
+          <div className="w-full max-w-[550px] mx-auto lg:mx-0 lg:w-[550px] flex flex-col gap-2 flex-shrink-0 lg:overflow-y-auto">
             {/* Opponent label */}
             <div className="flex items-center gap-2 px-1 ml-7">
               <div
@@ -149,11 +149,11 @@ export default function AnalysisView() {
             </div>
 
             {/* Eval Bar + Board row */}
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-stretch justify-center w-full">
               <EvalBar evalScore={currentEval} />
 
               {/* Board */}
-              <div className="w-[520px] rounded-xl overflow-hidden border border-gray-700 shadow-2xl relative">
+              <div className="w-full max-w-[520px] aspect-square rounded-xl overflow-hidden border border-gray-700 shadow-2xl relative flex-1 min-w-0">
                 {bestLinePreview && !exploreMode && (
                   <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-3 py-1 bg-emerald-900/90 border border-emerald-600 rounded-full text-[11px] text-emerald-300 font-medium pointer-events-none">
                     Previewing best line
@@ -322,7 +322,7 @@ export default function AnalysisView() {
           </div>
 
           {/* Right Panel: Tabbed Navigation & Panels */}
-          <div className="flex-1 min-w-0 flex flex-col overflow-hidden min-h-0">
+          <div className="flex-1 min-w-0 flex flex-col lg:overflow-hidden lg:min-h-0">
             {streamedMoves.length > 0 && (
               <Tabs
                 tabs={analysisTabs}
@@ -331,7 +331,7 @@ export default function AnalysisView() {
               />
             )}
 
-            <div className="flex-1 overflow-y-auto min-h-0 py-4">
+            <div className="flex-1 lg:overflow-y-auto min-h-0 py-3 sm:py-4">
               {/* Moves Tab */}
               {(rightTab === 'moves' || streamedMoves.length === 0) && (
                 <div className="flex flex-col gap-4">

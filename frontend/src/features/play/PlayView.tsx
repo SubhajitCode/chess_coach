@@ -42,33 +42,33 @@ export default function PlayView() {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
       {/* Top Navbar */}
-      <header className="px-6 py-3.5 bg-gray-900/90 border-b border-gray-800 backdrop-blur flex items-center justify-between sticky top-0 z-30">
-        <div className="flex items-center gap-4">
+      <header className="px-3 sm:px-6 py-2.5 sm:py-3.5 bg-gray-900/90 border-b border-gray-800 backdrop-blur flex items-center justify-between sticky top-0 z-30">
+        <div className="flex items-center gap-2.5 sm:gap-4 min-w-0">
           <button
             type="button"
             onClick={() => navigate('/')}
-            className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors px-2.5 py-1.5 rounded-lg hover:bg-gray-800 cursor-pointer"
+            className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200 transition-colors px-2 py-1.5 rounded-lg hover:bg-gray-800 cursor-pointer flex-shrink-0"
           >
             ← Dashboard
           </button>
-          <div className="flex items-center gap-2">
-            <span className="text-xl">⚔️</span>
-            <div>
-              <h1 className="text-sm font-bold text-white tracking-wide flex items-center gap-2">
-                Sparring Arena
-                <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-purple-900/60 text-purple-300 border border-purple-700/60">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-lg sm:text-xl flex-shrink-0">⚔️</span>
+            <div className="min-w-0">
+              <h1 className="text-xs sm:text-sm font-bold text-white tracking-wide flex items-center gap-1.5 flex-wrap">
+                <span>Sparring Arena</span>
+                <span className="px-1.5 sm:px-2 py-0.5 text-[10px] font-semibold rounded-full bg-purple-900/60 text-purple-300 border border-purple-700/60 truncate max-w-[140px] sm:max-w-none">
                   {engine === 'human_model'
-                    ? '🧠 Human AI Model (1400–1800)'
+                    ? '🧠 Human AI'
                     : engine === 'hybrid'
-                    ? '♟️ Hybrid Coach'
-                    : '⚡ Stockfish 16'}
+                    ? '♟️ Hybrid'
+                    : '⚡ Stockfish'}
                 </span>
               </h1>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="hidden md:flex items-center gap-2">
           <button
             type="button"
             onClick={() => handleAnalyzeInCoach(playerColor)}
@@ -91,9 +91,9 @@ export default function PlayView() {
       </header>
 
       {/* Main Play Body */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-2 sm:p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-start">
         {/* Left Board Column (7 cols) */}
-        <div className="lg:col-span-7 flex flex-col items-center gap-3">
+        <div className="lg:col-span-7 flex flex-col items-center gap-2.5 sm:gap-3 w-full max-w-[520px] mx-auto">
           {/* Opponent Info Bar */}
           <PlayerInfoBar
             isOpponent
@@ -102,10 +102,10 @@ export default function PlayView() {
           />
 
           {/* Chessboard container with EvalBar */}
-          <div className="relative flex gap-3 items-center justify-center p-2 rounded-2xl bg-gray-900/60 border border-gray-800/80 shadow-2xl">
+          <div className="w-full relative flex gap-2 sm:gap-3 items-stretch justify-center p-2 rounded-2xl bg-gray-900/60 border border-gray-800/80 shadow-2xl">
             <EvalBar evalScore={lastEval} playerColor={playerColor} />
 
-            <div className="w-[340px] sm:w-[440px] md:w-[480px]">
+            <div className="w-full max-w-[480px] aspect-square flex-1 min-w-0">
               <Chessboard
                 options={{
                   id: `sparring-board-${playerColor}`,

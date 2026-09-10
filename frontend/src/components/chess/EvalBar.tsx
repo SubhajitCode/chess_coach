@@ -35,8 +35,8 @@ export default function EvalBar({ evalScore, evalCp }: EvalBarProps) {
 
   return (
     <div
-      className="flex flex-col items-center select-none"
-      style={{ width: 22, height: '100%', minHeight: 300 }}
+      className="flex flex-col items-center select-none flex-shrink-0"
+      style={{ width: 22, height: '100%', minHeight: 180 }}
     >
       <div className="relative w-full flex-1 rounded overflow-hidden bg-[#262421] border border-gray-700/80 shadow-inner flex flex-col justify-end">
         {/* White portion */}

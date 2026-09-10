@@ -38,7 +38,7 @@ export default function MoveTable({
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden flex flex-col h-72">
+    <div className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden flex flex-col h-64 sm:h-72">
       <div className="px-4 py-2.5 bg-gray-800 border-b border-gray-700 text-xs font-semibold text-gray-400 uppercase tracking-wider">
         Move Notation
       </div>
@@ -96,7 +96,7 @@ function MoveButton({
       ref={btnRef}
       type="button"
       onClick={onClick}
-      className={`w-full text-left px-2 py-1 rounded transition-colors flex items-center justify-between cursor-pointer ${
+      className={`w-full text-left px-2 py-1.5 sm:py-1 min-h-[32px] rounded transition-colors flex items-center justify-between cursor-pointer ${
         isActive
           ? 'bg-blue-600 text-white font-bold'
           : 'text-gray-200 hover:bg-gray-700/60'

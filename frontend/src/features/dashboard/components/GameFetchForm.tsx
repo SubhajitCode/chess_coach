@@ -73,12 +73,12 @@ export default function GameFetchForm({
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
             {onOpenProfile && (
               <button
                 type="button"
                 onClick={onOpenProfile}
-                className="px-3.5 py-2 rounded-xl border border-gray-700 hover:border-gray-600 bg-gray-800 text-xs font-semibold text-gray-300 hover:text-white transition-colors cursor-pointer"
+                className="flex-1 sm:flex-none justify-center px-3.5 py-2 rounded-xl border border-gray-700 hover:border-gray-600 bg-gray-800 text-xs font-semibold text-gray-300 hover:text-white transition-colors cursor-pointer min-h-[36px] flex items-center gap-1.5"
               >
                 {hasUsername ? `${platformIcon} ${profile.username}` : 'Configure Account'}
               </button>
@@ -88,7 +88,7 @@ export default function GameFetchForm({
               type="button"
               onClick={handleFetchClick}
               disabled={loading || !hasUsername}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-500 text-xs font-semibold text-white transition-colors cursor-pointer disabled:cursor-not-allowed flex items-center gap-2"
+              className="flex-1 sm:flex-none justify-center px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-500 text-xs font-semibold text-white transition-colors cursor-pointer disabled:cursor-not-allowed flex items-center gap-2 min-h-[36px]"
             >
               {loading ? (
                 <>
