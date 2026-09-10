@@ -23,6 +23,7 @@ from services.engines.common import (
     extract_tactical_motifs,
     pv_preview,
 )
+from services.opening_book import is_book_move, get_book_move_details
 from services.neural_model.chess_encoder import (
     NUM_ACTIONS,
     decode_move_index,
@@ -234,7 +235,11 @@ class HumanNeuralEngine(BaseChessEngine):
                             cp_loss = max(0.0, (eval_before_white or 0) - (eval_after_white or 0))
                         else:
                             cp_loss = max(0.0, (eval_after_white or 0) - (eval_before_white or 0))
-                    classification = classify_move(cp_loss)
+                    book_details = get_book_move_details(board_before, move, cp_loss)
+                    if book_details["is_book"]:
+                        classification = "book"
+                    else:
+                        classification = classify_move(cp_loss)
 
                 motifs = extract_tactical_motifs(board_before, move, board)
                 threat_summary, threat_eval = build_threat_summary(board, reply_move_obj, cp_loss)
@@ -280,6 +285,9 @@ class HumanNeuralEngine(BaseChessEngine):
                     "motifs": motifs,
                     "threat_summary": threat_summary,
                     "threat_eval": threat_eval,
+                    "is_book": book_details.get("is_book", False),
+                    "book_weight": book_details.get("book_weight"),
+                    "book_candidates": book_details.get("book_candidates", []),
                     "human_move_prob": played_prob,
                     "human_candidates": top_candidates,
                     "is_human_blindspot": is_blindspot,
@@ -389,7 +397,11 @@ class HumanNeuralEngine(BaseChessEngine):
                         cp_loss = max(0.0, (eval_before or 0) - (eval_after or 0))
                     else:
                         cp_loss = max(0.0, (eval_after or 0) - (eval_before or 0))
-                classification = classify_move(cp_loss)
+                book_details = get_book_move_details(board_before, move, cp_loss)
+                if book_details["is_book"]:
+                    classification = "book"
+                else:
+                    classification = classify_move(cp_loss)
 
             dev_candidates = self._get_top_candidates(board, probs_after, top_k=1)
             dev_best_move = chess.Move.from_uci(dev_candidates[0]["move_uci"]) if dev_candidates else None
@@ -414,6 +426,9 @@ class HumanNeuralEngine(BaseChessEngine):
                 "motifs": motifs,
                 "threat_summary": threat_summary,
                 "threat_eval": threat_eval,
+                "is_book": book_details.get("is_book", False),
+                "book_weight": book_details.get("book_weight"),
+                "book_candidates": book_details.get("book_candidates", []),
                 "human_move_prob": played_prob,
                 "is_human_blindspot": (not is_best_move) and (played_prob >= 25.0) and (cp_loss >= 100.0),
                 "deviation_best_move_uci": str(dev_best_move) if dev_best_move else None,

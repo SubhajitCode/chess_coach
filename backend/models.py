@@ -96,6 +96,9 @@ class MoveAnalysis(BaseModel):
     practical_best_move_san: Optional[str] = None
     practical_best_move_summary: Optional[str] = None
     trap_danger: Optional[str] = None
+    is_book: bool = False
+    book_weight: Optional[int] = None
+    book_candidates: list[dict] = Field(default_factory=list)
 
 
 class GameSummary(BaseModel):
@@ -110,6 +113,7 @@ class GameSummary(BaseModel):
     accuracy: float
     avg_cp_loss: Optional[float] = None
     estimated_elo: Optional[int] = None
+    book_moves: Optional[int] = 0
 
 
 class AnalysisResult(BaseModel):

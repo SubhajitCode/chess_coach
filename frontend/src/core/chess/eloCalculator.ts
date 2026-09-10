@@ -64,6 +64,7 @@ export function computeSideStats(moves: Partial<ChessMove>[] = []): SideStats {
   let good = 0
   let excellent = 0
   let best = 0
+  let book = 0
 
   for (const m of moves) {
     if (m.cp_loss !== undefined && m.cp_loss !== null) {
@@ -77,6 +78,10 @@ export function computeSideStats(moves: Partial<ChessMove>[] = []): SideStats {
     else if (c === 'good') good++
     else if (c === 'excellent') excellent++
     else if (c === 'best') best++
+    else if (c === 'book') {
+      book++
+      best++
+    }
   }
 
   const avgCpLoss = lossCount > 0 ? totalLoss / lossCount : null
@@ -106,5 +111,6 @@ export function computeSideStats(moves: Partial<ChessMove>[] = []): SideStats {
     good_moves: good,
     excellent_moves: excellent,
     best_moves: best,
+    book_moves: book,
   }
 }

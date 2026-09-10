@@ -7,7 +7,7 @@ export interface WhyBadCardProps {
 export default function WhyBadCard({ whyBadSummary }: WhyBadCardProps) {
   if (!whyBadSummary) return null
 
-  const { headline, detail, alternative, replyLine } = whyBadSummary
+  const { headline, detail, alternative, replyLine, recommendedLine } = whyBadSummary
 
   return (
     <div className="rounded-lg border border-red-900/50 bg-red-950/20 p-3.5 flex flex-col gap-2">
@@ -23,8 +23,14 @@ export default function WhyBadCard({ whyBadSummary }: WhyBadCardProps) {
       )}
       {replyLine && (
         <div className="text-[11px] text-gray-400">
-          Refutation line:{' '}
+          Opponent punishment line:{' '}
           <span className="font-mono text-white font-semibold">{replyLine}</span>
+        </div>
+      )}
+      {recommendedLine && !alternative && (
+        <div className="text-[11px] text-gray-400">
+          Engine recommendation:{' '}
+          <span className="font-mono text-white font-semibold">{recommendedLine}</span>
         </div>
       )}
     </div>

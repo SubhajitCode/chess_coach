@@ -6,6 +6,7 @@ import MotifBadges from './components/MotifBadges'
 import EvalSwingCard from './components/EvalSwingCard'
 import BestMoveCard from './components/BestMoveCard'
 import WhyBadCard from './components/WhyBadCard'
+import CoachInsightCard from './components/CoachInsightCard'
 import AskCoachBox from './components/AskCoachBox'
 import LineStepViewer from '../../components/chess/LineStepViewer'
 import type { ChessMove, LineStep, PlayerColor } from '../../types/chess'
@@ -260,7 +261,17 @@ export default function CoachPanel({
             )}
 
             {/* Why Bad Card */}
-            <WhyBadCard whyBadSummary={whyBadSummary} />
+            {whyBadSummary && <WhyBadCard whyBadSummary={whyBadSummary} />}
+
+            {/* Coach Insight Card */}
+            {!whyBadSummary && currentMove && (
+              <CoachInsightCard
+                move={currentMove}
+                feedback={feedback}
+                isPlayerMove={isPlayerMove}
+                playerColor={playerColor}
+              />
+            )}
 
             {/* Evaluation swing */}
             {currentMove?.eval_before !== null &&
@@ -277,17 +288,20 @@ export default function CoachPanel({
               )}
 
             {/* Engine's best move */}
-            {currentMove?.best_move_uci && cls !== 'best' && (
-              <BestMoveCard
-                uci={currentMove.best_move_uci}
-                san={currentMove.best_move_san}
-                summary={currentMove.best_move_summary}
-                fenBefore={currentMove.fen_before}
-                onPreview={handleBestMovePreview}
-                onExitPreview={handleBestMoveExitPreview}
-                isPreviewing={bestMovePreviewOn}
-              />
-            )}
+            {currentMove?.best_move_uci &&
+              cls !== 'best' &&
+              cls !== 'book' &&
+              currentMove.best_move_san !== currentMove.move_san && (
+                <BestMoveCard
+                  uci={currentMove.best_move_uci}
+                  san={currentMove.best_move_san}
+                  summary={currentMove.best_move_summary}
+                  fenBefore={currentMove.fen_before}
+                  onPreview={handleBestMovePreview}
+                  onExitPreview={handleBestMoveExitPreview}
+                  isPreviewing={bestMovePreviewOn}
+                />
+              )}
 
             {/* Recommended Practical Human Alternative */}
             {currentMove?.practical_best_move_san &&
@@ -315,7 +329,9 @@ export default function CoachPanel({
             {currentMove?.best_line_uci &&
               currentMove.best_line_uci.length > 0 &&
               currentMove.fen_before &&
-              cls !== 'best' && (
+              cls !== 'best' &&
+              cls !== 'book' &&
+              currentMove.best_move_san !== currentMove.move_san && (
                 <LineStepViewer
                   label="Preview best line"
                   uciList={currentMove.best_line_uci}

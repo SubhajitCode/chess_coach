@@ -33,6 +33,7 @@ export interface WhyBadSummary {
   detail: string | null
   alternative: string | null
   replyLine: string | null
+  recommendedLine?: string | null
 }
 
 export interface DeviationPayload {

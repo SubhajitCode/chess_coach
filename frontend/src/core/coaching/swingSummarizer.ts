@@ -15,11 +15,33 @@ export function buildPositionSwingSummary(
   return `Position changed from ${beforeL.text} to ${afterL.text}.`
 }
 
+export function isSuboptimalMove(move?: Partial<ChessMove> | null): boolean {
+  if (!move) return false
+  const cls = move.classification
+  if (cls === 'blunder' || cls === 'mistake' || cls === 'inaccuracy') {
+    return true
+  }
+  if (
+    cls === 'best' ||
+    cls === 'book' ||
+    cls === 'excellent' ||
+    cls === 'good' ||
+    cls === 'forced'
+  ) {
+    return false
+  }
+  return (move.cp_loss ?? 0) >= 35
+}
+
 export function buildAlternativeSummary(
   bestSan?: string | null,
-  bestSummary?: string | null
+  bestSummary?: string | null,
+  playedSan?: string | null
 ): string | null {
   if (!bestSan) return null
+  const cleanBest = bestSan.trim().toLowerCase()
+  const cleanPlayed = playedSan?.trim().toLowerCase()
+  if (cleanPlayed && cleanBest === cleanPlayed) return null
   if (bestSummary) {
     return `Better was ${bestSan} (${bestSummary.toLowerCase()}).`
   }
@@ -56,12 +78,8 @@ export function buildWhyBadSummary(
   feedback?: string | null,
   playerColor: PlayerColor = 'white'
 ): WhyBadSummary | null {
-  if (!move) return null
+  if (!move || !isSuboptimalMove(move)) return null
   const cls = move.classification
-  const isMistake = cls === 'blunder' || cls === 'mistake' || cls === 'inaccuracy'
-  if (!isMistake && !feedback && (!move.cp_loss || move.cp_loss <= 20)) {
-    return null
-  }
 
   const swing = buildPositionSwingSummary(
     move.eval_before,
@@ -70,15 +88,29 @@ export function buildWhyBadSummary(
   )
   const alt = buildAlternativeSummary(
     move.best_move_san,
-    move.best_move_summary
+    move.best_move_summary,
+    move.move_san
   )
   const headline = feedback || buildFallbackHeadline(cls, move.cp_loss)
-  const replyLine = move.best_line_san?.slice(0, 3).join(' ') || null
+
+  // Use opponent's reply / punishment line, not the best alternative line
+  const replyLine =
+    move.deviation_best_line_san && move.deviation_best_line_san.length > 0
+      ? move.deviation_best_line_san.slice(0, 3).join(' ')
+      : move.reply_line_san && move.reply_line_san.length > 0
+      ? move.reply_line_san.slice(0, 3).join(' ')
+      : null
+
+  const recommendedLine =
+    move.best_line_san && move.best_line_san.length > 0
+      ? move.best_line_san.slice(0, 4).join(' ')
+      : null
 
   return {
     headline: headline || null,
     detail: swing || null,
     alternative: alt || null,
     replyLine: replyLine || null,
+    recommendedLine: recommendedLine || null,
   }
 }

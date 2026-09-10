@@ -12,6 +12,13 @@ export type MoveClassification =
 
 export type FindabilityTier = 'intuitive' | 'calculated' | 'computer'
 
+export interface BookCandidate {
+  san: string
+  uci: string
+  weight: number
+  percentage?: number
+}
+
 export interface ChessMove {
   move_number: number
   color: PlayerColor
@@ -30,6 +37,8 @@ export interface ChessMove {
   best_line_san?: string[]
   deviation_best_line_uci?: string[]
   deviation_best_line_san?: string[]
+  reply_line_uci?: string[]
+  reply_line_san?: string[]
   practical_best_move_san?: string
   practical_best_move_uci?: string
   threat_summary?: string
@@ -38,6 +47,9 @@ export interface ChessMove {
   move_summary?: string
   motifs?: string[]
   san?: string
+  is_book?: boolean
+  book_weight?: number
+  book_candidates?: BookCandidate[]
 }
 
 export interface ParsedMove {
@@ -90,6 +102,7 @@ export interface SideStats {
   good_moves: number
   excellent_moves: number
   best_moves: number
+  book_moves?: number
 }
 
 export interface GameSummary extends Partial<SideStats> {

@@ -311,7 +311,7 @@ def pv_preview(board: chess.Board, pv: Optional[List[chess.Move]], limit: int = 
 
 def build_summary(moves_data: list, player_color: str) -> dict:
     player_moves = [m for m in moves_data if m.get("color") == player_color]
-    counts = {c: 0 for c in ["best", "excellent", "good", "inaccuracy", "mistake", "blunder"]}
+    counts = {c: 0 for c in ["best", "book", "excellent", "good", "inaccuracy", "mistake", "blunder"]}
     for m in player_moves:
         cls_name = m.get("classification", "good")
         counts[cls_name] = counts.get(cls_name, 0) + 1
@@ -320,7 +320,7 @@ def build_summary(moves_data: list, player_color: str) -> dict:
     avg_capped_loss = 0.0
     if total_player > 0:
         weighted_score = sum(
-            {"best": 100, "excellent": 90, "good": 75, "inaccuracy": 50, "mistake": 25, "blunder": 0}.get(m.get("classification"), 75)
+            {"best": 100, "book": 100, "excellent": 90, "good": 75, "inaccuracy": 50, "mistake": 25, "blunder": 0}.get(m.get("classification", "good"), 75)
             for m in player_moves
         )
         accuracy = round(weighted_score / total_player, 1)
@@ -338,6 +338,7 @@ def build_summary(moves_data: list, player_color: str) -> dict:
         "good_moves": counts["good"],
         "excellent_moves": counts["excellent"],
         "best_moves": counts["best"],
+        "book_moves": counts["book"],
         "accuracy": accuracy,
         "avg_cp_loss": round(avg_capped_loss, 1) if total_player > 0 else None,
         "estimated_elo": estimate_elo(avg_capped_loss, accuracy) if total_player > 0 else None,

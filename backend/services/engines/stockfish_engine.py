@@ -20,6 +20,7 @@ from services.engines.common import (
     extract_tactical_motifs,
     pv_preview,
 )
+from services.opening_book import is_book_move, get_book_move_details
 
 STOCKFISH_PATH = os.getenv("STOCKFISH_PATH", "/opt/homebrew/bin/stockfish")
 DEFAULT_DEPTH = 18
@@ -109,7 +110,11 @@ class StockfishEngine(BaseChessEngine):
                         cp_loss = (eval_after_white or 0) - (eval_before_white or 0)
                     cp_loss = max(0.0, cp_loss)
 
-                    classification = classify_move(cp_loss)
+                    book_details = get_book_move_details(board_before, move, cp_loss)
+                    if book_details["is_book"]:
+                        classification = "book"
+                    else:
+                        classification = classify_move(cp_loss)
                     motifs = extract_tactical_motifs(board_before, move, board)
                     threat_summary, threat_eval = build_threat_summary(board, reply_move, cp_loss)
 
@@ -136,6 +141,9 @@ class StockfishEngine(BaseChessEngine):
                         "motifs": motifs,
                         "threat_summary": threat_summary,
                         "threat_eval": threat_eval,
+                        "is_book": book_details.get("is_book", False),
+                        "book_weight": book_details.get("book_weight"),
+                        "book_candidates": book_details.get("book_candidates", []),
                         **build_move_piece_metadata(board_before, move, "move"),
                         **build_move_piece_metadata(board_before, best_move, "best_move"),
                         **build_move_piece_metadata(board, reply_move, "reply_move"),

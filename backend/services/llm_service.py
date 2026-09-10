@@ -670,7 +670,7 @@ def _build_move_context_lines(moves: list[dict], player_color: str, target_indic
             line += f" loss={cp_loss:.0f}cp"
         if move.get("move_summary"):
             line += f" played=\"{move['move_summary']}\""
-        if move.get("best_move_san") and cls not in ("best", "excellent", "good"):
+        if move.get("best_move_san") and cls not in ("best", "book", "excellent", "good"):
             line += f" best={move['best_move_san']}"
         lines.append(line)
 
@@ -817,6 +817,7 @@ For each target move index, diagnose the root cause with depth and clarity:
 SPECIAL INSTRUCTIONS:
 - When `findability_tier=computer_only`: Be empathetic. Reassure the player that the engine defense was obscure, and explain the natural practical plan.
 - When `is_common_human_blindspot=true`: Highlight that this is a classic psychological trap for club players.
+- For opening book moves (classification=book): Explain the central strategic goals and plans of this recognized opening setup.
 - For player's strong/best moves: Explain the concrete strategic achievement (e.g. claiming the outpost, punishing overextension).
 - Never output passive coordinates like "Pawn moves from e2 to e4". Speak with authoritative, instructive chess terminology.
 - Respond with ONLY a JSON array with one object per target index ({target_list}):

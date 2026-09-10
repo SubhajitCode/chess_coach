@@ -6,6 +6,7 @@ import chess.engine
 import io
 from typing import Generator
 from models import MoveAnalysis, GameSummary, AnalysisResult
+from services.opening_book import is_book_move, get_book_move_details
 
 STOCKFISH_PATH = os.getenv("STOCKFISH_PATH", "/opt/homebrew/bin/stockfish")
 DEFAULT_DEPTH = 18
@@ -420,12 +421,16 @@ def _build_move_record(
     cp_loss: float,
     classification: str,
     record_type: str | None = None,
+    book_details: dict | None = None,
 ) -> dict:
     board_after = board_before.copy(stack=False)
     board_after.push(move)
 
     motifs = extract_tactical_motifs(board_before, move, board_after)
     threat_summary, threat_eval = _build_threat_summary(board_after, reply_move, cp_loss)
+
+    if book_details is None:
+        book_details = get_book_move_details(board_before, move, cp_loss)
 
     record = {
         "move_number": move_number,
@@ -449,6 +454,9 @@ def _build_move_record(
         "motifs": motifs,
         "threat_summary": threat_summary,
         "threat_eval": threat_eval,
+        "is_book": book_details.get("is_book", False),
+        "book_weight": book_details.get("book_weight"),
+        "book_candidates": book_details.get("book_candidates", []),
         **_move_fact_fields(board_before, move, "move"),
         **_move_fact_fields(board_before, best_move, "best_move"),
         **_move_fact_fields(board_after, reply_move, "reply_move"),
@@ -611,7 +619,11 @@ def analyze_position(
 
             cp_loss = max(0.0, cp_loss)  # loss can't be negative
 
-            classification = classify_move(cp_loss)
+            book_details = get_book_move_details(board_before, move, cp_loss)
+            if book_details["is_book"]:
+                classification = "book"
+            else:
+                classification = classify_move(cp_loss)
 
             moves_data.append(MoveAnalysis(**_build_move_record(
                 board_before=board_before,
@@ -628,11 +640,12 @@ def analyze_position(
                 eval_after_white=eval_after_white,
                 cp_loss=cp_loss,
                 classification=classification,
+                book_details=book_details,
             )))
 
     # Build summary for the player
     player_moves = [m for m in moves_data if m.color == player_color]
-    counts = {c: 0 for c in ["best", "excellent", "good", "inaccuracy", "mistake", "blunder"]}
+    counts = {c: 0 for c in ["best", "book", "excellent", "good", "inaccuracy", "mistake", "blunder"]}
     for m in player_moves:
         counts[m.classification] = counts.get(m.classification, 0) + 1
 
@@ -641,7 +654,7 @@ def analyze_position(
     # Accuracy formula (approximation used by Chess.com)
     if total_player > 0:
         weighted_score = sum(
-            {"best": 100, "excellent": 90, "good": 75, "inaccuracy": 50, "mistake": 25, "blunder": 0}[m.classification]
+            {"best": 100, "book": 100, "excellent": 90, "good": 75, "inaccuracy": 50, "mistake": 25, "blunder": 0}.get(m.classification, 75)
             for m in player_moves
         )
         accuracy = round(weighted_score / total_player, 1)
@@ -658,6 +671,7 @@ def analyze_position(
         good_moves=counts["good"],
         excellent_moves=counts["excellent"],
         best_moves=counts["best"],
+        book_moves=counts["book"],
         accuracy=accuracy,
         avg_cp_loss=round(avg_capped_loss, 1) if total_player > 0 else None,
         estimated_elo=_estimate_elo(avg_capped_loss) if total_player > 0 else None,
@@ -678,15 +692,16 @@ def analyze_position(
 
 def _build_summary(moves_data: list, player_color: str) -> dict:
     player_moves = [m for m in moves_data if m["color"] == player_color]
-    counts = {c: 0 for c in ["best", "excellent", "good", "inaccuracy", "mistake", "blunder"]}
+    counts = {c: 0 for c in ["best", "book", "excellent", "good", "inaccuracy", "mistake", "blunder"]}
     for m in player_moves:
-        counts[m["classification"]] = counts.get(m["classification"], 0) + 1
+        cls_name = m.get("classification", "good")
+        counts[cls_name] = counts.get(cls_name, 0) + 1
 
     total_player = len(player_moves)
     avg_capped_loss = 0.0
     if total_player > 0:
         weighted_score = sum(
-            {"best": 100, "excellent": 90, "good": 75, "inaccuracy": 50, "mistake": 25, "blunder": 0}[m["classification"]]
+            {"best": 100, "book": 100, "excellent": 90, "good": 75, "inaccuracy": 50, "mistake": 25, "blunder": 0}.get(m.get("classification", "good"), 75)
             for m in player_moves
         )
         accuracy = round(weighted_score / total_player, 1)
@@ -704,6 +719,7 @@ def _build_summary(moves_data: list, player_color: str) -> dict:
         "good_moves": counts["good"],
         "excellent_moves": counts["excellent"],
         "best_moves": counts["best"],
+        "book_moves": counts["book"],
         "accuracy": accuracy,
         "avg_cp_loss": round(avg_capped_loss, 1) if total_player > 0 else None,
         "estimated_elo": _estimate_elo(avg_capped_loss) if total_player > 0 else None,
@@ -766,7 +782,11 @@ def analyze_pgn_stream(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: 
                     cp_loss = (eval_after_white or 0) - (eval_before_white or 0)
                 cp_loss = max(0.0, cp_loss)
 
-                classification = classify_move(cp_loss)
+                book_details = get_book_move_details(board_before, move, cp_loss)
+                if book_details["is_book"]:
+                    classification = "book"
+                else:
+                    classification = classify_move(cp_loss)
 
                 move_dict = _build_move_record(
                     board_before=board_before,
@@ -784,6 +804,7 @@ def analyze_pgn_stream(pgn_text: str, depth: int = DEFAULT_DEPTH, player_color: 
                     cp_loss=cp_loss,
                     classification=classification,
                     record_type="move",
+                    book_details=book_details,
                 )
                 moves_data.append(move_dict)
                 yield f"data: {json.dumps(move_dict)}\n\n"
