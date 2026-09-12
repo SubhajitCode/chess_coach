@@ -103,24 +103,41 @@ class HybridEngine(BaseChessEngine):
 
                     board.push(move)
 
-                    info_after = engine.analyse(board, chess.engine.Limit(depth=depth))
-                    eval_after_white = score_to_cp(info_after["score"], chess.WHITE)
-                    reply_move = info_after.get("pv", [None])[0]
-                    reply_line_san, reply_line_uci = pv_preview(
-                        board.copy(stack=False), info_after.get("pv")
-                    )
+                    is_delivered_mate = board.is_checkmate()
+                    is_best = (best_move is not None and move == best_move)
 
-                    if color == "white":
-                        cp_loss = (eval_before_white or 0) - (eval_after_white or 0)
+                    if is_delivered_mate:
+                        eval_after_white = 10000.0 if color == "white" else -10000.0
+                        reply_move = None
+                        reply_line_san, reply_line_uci = [], []
                     else:
-                        cp_loss = (eval_after_white or 0) - (eval_before_white or 0)
-                    cp_loss = max(0.0, cp_loss)
+                        info_after = engine.analyse(board, chess.engine.Limit(depth=depth))
+                        eval_after_white = score_to_cp(info_after["score"], chess.WHITE)
+                        reply_move = info_after.get("pv", [None])[0]
+                        reply_line_san, reply_line_uci = pv_preview(
+                            board.copy(stack=False), info_after.get("pv")
+                        )
 
-                    book_details = get_book_move_details(board_before, move, cp_loss)
-                    if book_details["is_book"]:
-                        classification = "book"
+                    if is_delivered_mate:
+                        cp_loss = 0.0
+                        classification = "best"
+                        book_details = {"is_book": False, "book_weight": None, "book_candidates": []}
+                    elif is_best:
+                        cp_loss = 0.0
+                        book_details = get_book_move_details(board_before, move, 0.0)
+                        classification = "book" if book_details.get("is_book") else "best"
                     else:
-                        classification = classify_move(cp_loss)
+                        if color == "white":
+                            cp_loss = (eval_before_white or 0) - (eval_after_white or 0)
+                        else:
+                            cp_loss = (eval_after_white or 0) - (eval_before_white or 0)
+                        cp_loss = max(0.0, cp_loss)
+
+                        book_details = get_book_move_details(board_before, move, cp_loss)
+                        if book_details.get("is_book"):
+                            classification = "book"
+                        else:
+                            classification = classify_move(cp_loss)
                     motifs = extract_tactical_motifs(board_before, move, board)
                     threat_summary, threat_eval = build_threat_summary(board, reply_move, cp_loss)
 

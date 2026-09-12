@@ -28,10 +28,16 @@ DEFAULT_DEPTH = 18
 
 
 def score_to_cp(score: chess.engine.Score, pov: chess.Color) -> Optional[float]:
+    if score is None:
+        return None
     relative = score.pov(pov)
     if relative.is_mate():
+        if relative == chess.engine.MateGiven:
+            return 10000.0
         mate_in = relative.mate()
-        return 10000.0 if mate_in > 0 else -10000.0
+        if mate_in is not None and mate_in > 0:
+            return 10000.0
+        return -10000.0
     cp = relative.score()
     return float(cp) if cp is not None else None
 
@@ -98,24 +104,41 @@ class StockfishEngine(BaseChessEngine):
 
                     board.push(move)
 
-                    info_after = engine.analyse(board, chess.engine.Limit(depth=depth))
-                    eval_after_white = score_to_cp(info_after["score"], chess.WHITE)
-                    reply_move = info_after.get("pv", [None])[0]
-                    reply_line_san, reply_line_uci = pv_preview(
-                        board.copy(stack=False), info_after.get("pv")
-                    )
+                    is_delivered_mate = board.is_checkmate()
+                    is_best = (best_move is not None and move == best_move)
 
-                    if color == "white":
-                        cp_loss = (eval_before_white or 0) - (eval_after_white or 0)
+                    if is_delivered_mate:
+                        eval_after_white = 10000.0 if color == "white" else -10000.0
+                        reply_move = None
+                        reply_line_san, reply_line_uci = [], []
                     else:
-                        cp_loss = (eval_after_white or 0) - (eval_before_white or 0)
-                    cp_loss = max(0.0, cp_loss)
+                        info_after = engine.analyse(board, chess.engine.Limit(depth=depth))
+                        eval_after_white = score_to_cp(info_after["score"], chess.WHITE)
+                        reply_move = info_after.get("pv", [None])[0]
+                        reply_line_san, reply_line_uci = pv_preview(
+                            board.copy(stack=False), info_after.get("pv")
+                        )
 
-                    book_details = get_book_move_details(board_before, move, cp_loss)
-                    if book_details["is_book"]:
-                        classification = "book"
+                    if is_delivered_mate:
+                        cp_loss = 0.0
+                        classification = "best"
+                        book_details = {"is_book": False, "book_weight": None, "book_candidates": []}
+                    elif is_best:
+                        cp_loss = 0.0
+                        book_details = get_book_move_details(board_before, move, 0.0)
+                        classification = "book" if book_details.get("is_book") else "best"
                     else:
-                        classification = classify_move(cp_loss)
+                        if color == "white":
+                            cp_loss = (eval_before_white or 0) - (eval_after_white or 0)
+                        else:
+                            cp_loss = (eval_after_white or 0) - (eval_before_white or 0)
+                        cp_loss = max(0.0, cp_loss)
+
+                        book_details = get_book_move_details(board_before, move, cp_loss)
+                        if book_details.get("is_book"):
+                            classification = "book"
+                        else:
+                            classification = classify_move(cp_loss)
                     motifs = extract_tactical_motifs(board_before, move, board)
                     threat_summary, threat_eval = build_threat_summary(board, reply_move, cp_loss)
 
@@ -205,17 +228,30 @@ class StockfishEngine(BaseChessEngine):
                 board.push(move)
                 fen_after = board.fen()
 
-                info_after = engine.analyse(board, chess.engine.Limit(depth=depth))
-                eval_after = score_to_cp(info_after["score"], chess.WHITE)
+                is_delivered_mate = board.is_checkmate()
+                is_best = (best_move is not None and move == best_move)
 
-                if color == "white":
-                    cp_loss = (eval_before or 0) - (eval_after or 0)
+                if is_delivered_mate:
+                    eval_after = 10000.0 if color == "white" else -10000.0
+                    dev_best_move = None
+                    dev_best_line_san, dev_best_line_uci = [], []
                 else:
-                    cp_loss = (eval_after or 0) - (eval_before or 0)
-                cp_loss = max(0.0, cp_loss)
+                    info_after = engine.analyse(board, chess.engine.Limit(depth=depth))
+                    eval_after = score_to_cp(info_after["score"], chess.WHITE)
+                    dev_best_move = info_after.get("pv", [None])[0]
+                    dev_best_line_san, dev_best_line_uci = pv_preview(board, info_after.get("pv"), pv_length)
 
-                dev_best_move = info_after.get("pv", [None])[0]
-                dev_best_line_san, dev_best_line_uci = pv_preview(board, info_after.get("pv"), pv_length)
+                if is_delivered_mate or is_best:
+                    cp_loss = 0.0
+                    classification = "best"
+                else:
+                    if color == "white":
+                        cp_loss = (eval_before or 0) - (eval_after or 0)
+                    else:
+                        cp_loss = (eval_after or 0) - (eval_before or 0)
+                    cp_loss = max(0.0, cp_loss)
+                    classification = classify_move(cp_loss)
+
                 motifs = extract_tactical_motifs(board_before, move, board)
                 threat_summary, threat_eval = build_threat_summary(board, dev_best_move, cp_loss)
 
@@ -226,7 +262,7 @@ class StockfishEngine(BaseChessEngine):
                     "eval_after": eval_after,
                     "fen_after": fen_after,
                     "cp_loss": round(cp_loss, 1),
-                    "classification": classify_move(cp_loss),
+                    "classification": classification,
                     "deviation_best_move_uci": str(dev_best_move) if dev_best_move else None,
                     "deviation_best_move_san": board.san(dev_best_move) if dev_best_move in board.legal_moves else None,
                     "deviation_best_line_san": dev_best_line_san,

@@ -208,15 +208,19 @@ class HumanNeuralEngine(BaseChessEngine):
 
                 board.push(move)
 
-                probs_after, val_after = self.model.evaluate_board(board, self.device)
-                eval_after_white = value_to_cp(val_after, board.turn)
+                is_delivered_mate = board.is_checkmate()
+                is_best_move = (best_move_obj is not None and move == best_move_obj) or is_delivered_mate
 
-                reply_candidates = self._get_top_candidates(board, probs_after, top_k=1)
-                reply_move_obj = chess.Move.from_uci(reply_candidates[0]["move_uci"]) if reply_candidates else None
-                _, reply_line_san, reply_line_uci = self._greedy_pv(board, limit=4)
-
-                # Determine whether played move was the model's top choice
-                is_best_move = (best_move_obj is not None and move == best_move_obj)
+                if is_delivered_mate:
+                    eval_after_white = 10000.0 if color == "white" else -10000.0
+                    reply_move_obj = None
+                    reply_line_san, reply_line_uci = [], []
+                else:
+                    probs_after, val_after = self.model.evaluate_board(board, self.device)
+                    eval_after_white = value_to_cp(val_after, board.turn)
+                    reply_candidates = self._get_top_candidates(board, probs_after, top_k=1)
+                    reply_move_obj = chess.Move.from_uci(reply_candidates[0]["move_uci"]) if reply_candidates else None
+                    _, reply_line_san, reply_line_uci = self._greedy_pv(board, limit=4)
 
                 if is_best_move:
                     cp_loss = 0.0
@@ -370,10 +374,17 @@ class HumanNeuralEngine(BaseChessEngine):
             board_before = board.copy(stack=False)
             board.push(move)
             fen_after = board.fen()
-            probs_after, val_after = self.model.evaluate_board(board, self.device)
-            eval_after = value_to_cp(val_after, board.turn)
 
-            is_best_move = (best_cand is not None and move_uci == best_cand.get("move_uci"))
+            is_delivered_mate = board.is_checkmate()
+            is_best_move = (best_cand is not None and move_uci == best_cand.get("move_uci")) or is_delivered_mate
+
+            if is_delivered_mate:
+                eval_after = 10000.0 if color == "white" else -10000.0
+                probs_after, val_after = np.zeros(1968), 1.0 if color == "white" else -1.0
+            else:
+                probs_after, val_after = self.model.evaluate_board(board, self.device)
+                eval_after = value_to_cp(val_after, board.turn)
+
             if is_best_move:
                 cp_loss = 0.0
                 classification = "best"
