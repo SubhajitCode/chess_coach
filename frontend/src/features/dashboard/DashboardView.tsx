@@ -80,6 +80,13 @@ export default function DashboardView() {
             </button>
             <button
               type="button"
+              onClick={() => navigate('/openings')}
+              className="flex-1 sm:flex-none justify-center px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-all shadow flex items-center gap-1.5 cursor-pointer min-h-[34px]"
+            >
+              <span>♟</span> Opening Trainer
+            </button>
+            <button
+              type="button"
               onClick={() => setShowPasteModal(true)}
               className="flex-1 sm:flex-none justify-center px-3 py-1.5 text-xs text-gray-300 hover:text-white border border-gray-700 rounded-lg hover:border-gray-500 transition-colors cursor-pointer min-h-[34px]"
             >

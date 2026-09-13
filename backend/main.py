@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 
-from routers import games, analysis, coach, cache, profile, play
+from routers import games, analysis, coach, cache, profile, play, openings
 from services.db import init_db
 
 load_dotenv()
@@ -45,6 +45,7 @@ app.include_router(coach.router, prefix="/api")
 app.include_router(cache.router, prefix="/api")
 app.include_router(profile.router, prefix="/api")
 app.include_router(play.router, prefix="/api")
+app.include_router(openings.router, prefix="/api")
 
 
 @app.get("/api/health")

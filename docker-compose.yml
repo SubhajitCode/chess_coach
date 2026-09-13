@@ -15,6 +15,7 @@ services:
       - STOCKFISH_PATH=/usr/games/stockfish
       - CHESS_MODEL_PATH=/app/models/best_chess_policy_model.pt
       - DB_PATH=/app/data/chess_analyzer.db
+      - OPENINGS_DATA_DIR=/app/openings_data
       - PORT=8000
     volumes:
       - chess_analyzer_data:/app/data

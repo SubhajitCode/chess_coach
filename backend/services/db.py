@@ -90,6 +90,42 @@ def init_db() -> None:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS explorer_cache (
+                cache_key TEXT PRIMARY KEY,
+                response_json TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS opening_progress (
+                eco TEXT NOT NULL,
+                opening_name TEXT NOT NULL,
+                train_as TEXT NOT NULL,
+                times_practiced INTEGER DEFAULT 0,
+                times_correct INTEGER DEFAULT 0,
+                total_attempts INTEGER DEFAULT 0,
+                last_practiced_at TIMESTAMP,
+                next_review_at TIMESTAMP,
+                interval_days REAL DEFAULT 1.0,
+                ease_factor REAL DEFAULT 2.5,
+                streak INTEGER DEFAULT 0,
+                comfort_level TEXT DEFAULT 'new',
+                PRIMARY KEY (eco, opening_name, train_as)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS opening_explanations (
+                eco TEXT NOT NULL,
+                opening_name TEXT NOT NULL,
+                move_index INTEGER NOT NULL,
+                move_san TEXT NOT NULL,
+                explanation_json TEXT NOT NULL,
+                version INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (eco, opening_name, move_index)
+            )
+        """)
 
 
 def pgn_hash(pgn: str) -> str:
@@ -276,3 +312,103 @@ def save_player_profile(profile: dict[str, Any]) -> dict[str, Any]:
             ),
         )
     return get_player_profile()
+
+def get_explorer_cache(cache_key: str) -> str | None:
+    init_db()
+    with _db() as conn:
+        row = conn.execute("SELECT response_json FROM explorer_cache WHERE cache_key = ?", (cache_key,)).fetchone()
+    return row["response_json"] if row else None
+
+def save_explorer_cache(cache_key: str, response_json: str) -> None:
+    init_db()
+    with _db() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO explorer_cache (cache_key, response_json)
+            VALUES (?, ?)
+            """,
+            (cache_key, response_json)
+        )
+
+def get_opening_progress(eco: str, name: str, train_as: str) -> dict | None:
+    init_db()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM opening_progress WHERE eco = ? AND opening_name = ? AND train_as = ?",
+            (eco, name, train_as)
+        ).fetchone()
+    if not row:
+        return None
+    return dict(row)
+
+def save_opening_progress(eco: str, name: str, train_as: str, data: dict) -> None:
+    init_db()
+    with _db() as conn:
+        conn.execute(
+            """
+            INSERT INTO opening_progress (
+                eco, opening_name, train_as, times_practiced, times_correct, 
+                total_attempts, last_practiced_at, next_review_at, interval_days, 
+                ease_factor, streak, comfort_level
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(eco, opening_name, train_as) DO UPDATE SET
+                times_practiced = excluded.times_practiced,
+                times_correct = excluded.times_correct,
+                total_attempts = excluded.total_attempts,
+                last_practiced_at = excluded.last_practiced_at,
+                next_review_at = excluded.next_review_at,
+                interval_days = excluded.interval_days,
+                ease_factor = excluded.ease_factor,
+                streak = excluded.streak,
+                comfort_level = excluded.comfort_level
+            """,
+            (
+                eco, name, train_as,
+                data.get("times_practiced", 0),
+                data.get("times_correct", 0),
+                data.get("total_attempts", 0),
+                data.get("last_practiced_at"),
+                data.get("next_review_at"),
+                data.get("interval_days", 1.0),
+                data.get("ease_factor", 2.5),
+                data.get("streak", 0),
+                data.get("comfort_level", "new")
+            )
+        )
+
+def get_all_opening_progress() -> list[dict]:
+    init_db()
+    with _db() as conn:
+        rows = conn.execute("SELECT * FROM opening_progress").fetchall()
+    return [dict(r) for r in rows]
+
+def get_opening_explanation(eco: str, name: str, move_index: int) -> dict | None:
+    init_db()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT explanation_json FROM opening_explanations WHERE eco = ? AND opening_name = ? AND move_index = ?",
+            (eco, name, move_index)
+        ).fetchone()
+    if not row:
+        return None
+    return json.loads(row["explanation_json"])
+
+def save_opening_explanation(eco: str, name: str, move_index: int, move_san: str, explanation: dict) -> None:
+    init_db()
+    with _db() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO opening_explanations (eco, opening_name, move_index, move_san, explanation_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (eco, name, move_index, move_san, json.dumps(explanation))
+        )
+
+def get_all_opening_explanations(eco: str, name: str) -> list[dict]:
+    init_db()
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT move_index, move_san, explanation_json FROM opening_explanations WHERE eco = ? AND opening_name = ? ORDER BY move_index",
+            (eco, name)
+        ).fetchall()
+    return [{"move_index": r["move_index"], "move_san": r["move_san"], "explanation": json.loads(r["explanation_json"])} for r in rows]

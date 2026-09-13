@@ -20,6 +20,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     STOCKFISH_PATH=/usr/games/stockfish \
     CHESS_MODEL_PATH=/app/models/best_chess_policy_model.pt \
     DB_PATH=/app/data/chess_analyzer.db \
+    OPENINGS_DATA_DIR=/app/openings_data \
     PORT=8000
 
 # Install Stockfish engine and curl for diagnostics
@@ -30,8 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Ensure directories for SQLite data, neural models, and static SPA exist
-RUN mkdir -p /app/data /app/models /app/static
+# Ensure directories for SQLite data, neural models, static SPA, and openings data exist
+RUN mkdir -p /app/data /app/models /app/static /app/openings_data
 
 # Install CPU PyTorch wheel first to optimize Docker layer caching
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
