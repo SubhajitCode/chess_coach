@@ -309,6 +309,20 @@ def pv_preview(board: chess.Board, pv: Optional[List[chess.Move]], limit: int = 
     return pv_san, pv_uci
 
 
+def _calculate_side_summary(moves: list) -> tuple[float, Optional[float], Optional[int]]:
+    total = len(moves)
+    if total == 0:
+        return 0.0, None, None
+    weighted_score = sum(
+        {"best": 100, "book": 100, "excellent": 90, "good": 75, "inaccuracy": 50, "mistake": 25, "blunder": 0}.get(m.get("classification", "good"), 75)
+        for m in moves
+    )
+    accuracy = round(weighted_score / total, 1)
+    avg_capped_loss = sum(min(m.get("cp_loss", 0.0), MAX_CP_LOSS_FOR_STATS) for m in moves) / total
+    elo = estimate_elo(avg_capped_loss, accuracy)
+    return accuracy, round(avg_capped_loss, 1), elo
+
+
 def build_summary(moves_data: list, player_color: str) -> dict:
     player_moves = [m for m in moves_data if m.get("color") == player_color]
     counts = {c: 0 for c in ["best", "book", "excellent", "good", "inaccuracy", "mistake", "blunder"]}
@@ -317,21 +331,18 @@ def build_summary(moves_data: list, player_color: str) -> dict:
         counts[cls_name] = counts.get(cls_name, 0) + 1
 
     total_player = len(player_moves)
-    avg_capped_loss = 0.0
-    if total_player > 0:
-        weighted_score = sum(
-            {"best": 100, "book": 100, "excellent": 90, "good": 75, "inaccuracy": 50, "mistake": 25, "blunder": 0}.get(m.get("classification", "good"), 75)
-            for m in player_moves
-        )
-        accuracy = round(weighted_score / total_player, 1)
-        avg_capped_loss = sum(min(m.get("cp_loss", 0.0), MAX_CP_LOSS_FOR_STATS) for m in player_moves) / total_player
-    else:
-        accuracy = 0.0
+    accuracy, avg_capped_loss, estimated_elo = _calculate_side_summary(player_moves)
+
+    white_moves = [m for m in moves_data if m.get("color") == "white"]
+    black_moves = [m for m in moves_data if m.get("color") == "black"]
+    white_acc, white_loss, white_elo = _calculate_side_summary(white_moves)
+    black_acc, black_loss, black_elo = _calculate_side_summary(black_moves)
 
     return {
         "type": "summary",
         "total_moves": len(moves_data),
         "player_moves": total_player,
+        "player_color": player_color,
         "blunders": counts["blunder"],
         "mistakes": counts["mistake"],
         "inaccuracies": counts["inaccuracy"],
@@ -340,6 +351,10 @@ def build_summary(moves_data: list, player_color: str) -> dict:
         "best_moves": counts["best"],
         "book_moves": counts["book"],
         "accuracy": accuracy,
-        "avg_cp_loss": round(avg_capped_loss, 1) if total_player > 0 else None,
-        "estimated_elo": estimate_elo(avg_capped_loss, accuracy) if total_player > 0 else None,
+        "avg_cp_loss": avg_capped_loss,
+        "estimated_elo": estimated_elo,
+        "white_accuracy": white_acc if white_moves else None,
+        "black_accuracy": black_acc if black_moves else None,
+        "white_estimated_elo": white_elo if white_moves else None,
+        "black_estimated_elo": black_elo if black_moves else None,
     }

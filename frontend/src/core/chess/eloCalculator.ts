@@ -1,42 +1,73 @@
 import type { ChessMove, SideStats } from '../../types/chess'
 
+export const MOVE_ACCURACY_WEIGHTS: Record<string, number> = {
+  best: 100,
+  book: 100,
+  excellent: 90,
+  good: 75,
+  inaccuracy: 50,
+  mistake: 25,
+  blunder: 0,
+}
+
+export const ACCURACY_ELO_MAP: [number, number][] = [
+  [98.0, 2800],
+  [95.0, 2500],
+  [90.0, 2150],
+  [85.0, 1850],
+  [80.0, 1600],
+  [75.0, 1450],
+  [70.0, 1300],
+  [65.0, 1150],
+  [60.0, 1000],
+  [50.0, 750],
+  [40.0, 500],
+  [25.0, 300],
+]
+
+export const MAX_CP_LOSS_FOR_STATS = 200
+
 export function estimateElo(
   avgCpLoss: number | null,
   accuracy: number | null = null
 ): number | null {
   if (avgCpLoss === null && accuracy === null) return null
 
-  let eloFromLoss = 1500
-  if (avgCpLoss !== null) {
-    if (avgCpLoss <= 10) eloFromLoss = 2700 - avgCpLoss * 30
-    else if (avgCpLoss <= 25) eloFromLoss = 2400 - (avgCpLoss - 10) * 26.6
-    else if (avgCpLoss <= 45) eloFromLoss = 2000 - (avgCpLoss - 25) * 20
-    else if (avgCpLoss <= 70) eloFromLoss = 1600 - (avgCpLoss - 45) * 16
-    else if (avgCpLoss <= 100) eloFromLoss = 1200 - (avgCpLoss - 70) * 13.3
-    else if (avgCpLoss <= 150) eloFromLoss = 800 - (avgCpLoss - 100) * 8
-    else eloFromLoss = Math.max(300, 400 - (avgCpLoss - 150) * 2)
-  }
-
-  let eloFromAcc = 1500
+  let eloAcc = 1200
   if (accuracy !== null) {
-    if (accuracy >= 98) eloFromAcc = 2500 + (accuracy - 98) * 150
-    else if (accuracy >= 90) eloFromAcc = 2000 + (accuracy - 90) * 62.5
-    else if (accuracy >= 80) eloFromAcc = 1500 + (accuracy - 80) * 50
-    else if (accuracy >= 65) eloFromAcc = 1000 + (accuracy - 65) * 33.3
-    else if (accuracy >= 50) eloFromAcc = 600 + (accuracy - 50) * 26.6
-    else eloFromAcc = Math.max(300, 600 - (50 - accuracy) * 10)
+    const acc = Math.max(0, Math.min(100, accuracy))
+    if (acc >= ACCURACY_ELO_MAP[0][0]) {
+      eloAcc = ACCURACY_ELO_MAP[0][1]
+    } else if (acc <= ACCURACY_ELO_MAP[ACCURACY_ELO_MAP.length - 1][0]) {
+      eloAcc = ACCURACY_ELO_MAP[ACCURACY_ELO_MAP.length - 1][1]
+    } else {
+      for (let i = 0; i < ACCURACY_ELO_MAP.length - 1; i++) {
+        const [topAcc, topElo] = ACCURACY_ELO_MAP[i]
+        const [botAcc, botElo] = ACCURACY_ELO_MAP[i + 1]
+        if (acc <= topAcc && acc >= botAcc) {
+          const span = topAcc - botAcc
+          const progress = span > 0 ? (acc - botAcc) / span : 0
+          eloAcc = botElo + (topElo - botElo) * progress
+          break
+        }
+      }
+    }
   }
 
-  let estimated: number
-  if (avgCpLoss !== null && accuracy !== null) {
-    estimated = eloFromLoss * 0.6 + eloFromAcc * 0.4
-  } else if (avgCpLoss !== null) {
-    estimated = eloFromLoss
+  let finalElo: number
+  if (avgCpLoss !== null) {
+    const cappedCp = Math.min(MAX_CP_LOSS_FOR_STATS, Math.max(0, avgCpLoss))
+    const eloCp = Math.max(300, Math.min(2800, 2600 - cappedCp * 16))
+    if (accuracy !== null) {
+      finalElo = Math.round(eloAcc * 0.75 + eloCp * 0.25)
+    } else {
+      finalElo = Math.round(eloCp)
+    }
   } else {
-    estimated = eloFromAcc
+    finalElo = Math.round(eloAcc)
   }
 
-  return Math.round(Math.max(300, Math.min(2900, estimated)))
+  return Math.max(300, Math.min(2850, finalElo))
 }
 
 export function computeSideStats(moves: Partial<ChessMove>[] = []): SideStats {
@@ -53,6 +84,7 @@ export function computeSideStats(moves: Partial<ChessMove>[] = []): SideStats {
       good_moves: 0,
       excellent_moves: 0,
       best_moves: 0,
+      book_moves: 0,
     }
   }
 
@@ -65,37 +97,34 @@ export function computeSideStats(moves: Partial<ChessMove>[] = []): SideStats {
   let excellent = 0
   let best = 0
   let book = 0
+  let weightedScore = 0
+  let classifiedCount = 0
 
   for (const m of moves) {
     if (m.cp_loss !== undefined && m.cp_loss !== null) {
-      totalLoss += m.cp_loss
+      totalLoss += Math.min(Math.max(0, m.cp_loss), MAX_CP_LOSS_FOR_STATS)
       lossCount++
     }
     const c = m.classification
+    if (c) {
+      weightedScore += MOVE_ACCURACY_WEIGHTS[c] ?? 75
+      classifiedCount++
+    }
     if (c === 'blunder') blunders++
     else if (c === 'mistake') mistakes++
     else if (c === 'inaccuracy') inaccuracies++
     else if (c === 'good') good++
     else if (c === 'excellent') excellent++
     else if (c === 'best') best++
-    else if (c === 'book') {
-      book++
-      best++
-    }
+    else if (c === 'book') book++
   }
 
-  const avgCpLoss = lossCount > 0 ? totalLoss / lossCount : null
+  const avgCpLoss =
+    lossCount > 0 ? Math.round((totalLoss / lossCount) * 10) / 10 : null
+
   const accuracy =
-    avgCpLoss !== null
-      ? Math.round(
-          Math.max(
-            0,
-            Math.min(
-              100,
-              100 * Math.exp(-0.004 * avgCpLoss) - (blunders * 2 + mistakes * 1)
-            )
-          )
-        )
+    classifiedCount > 0
+      ? Math.round((weightedScore / classifiedCount) * 10) / 10
       : null
 
   const estimated_elo = estimateElo(avgCpLoss, accuracy)

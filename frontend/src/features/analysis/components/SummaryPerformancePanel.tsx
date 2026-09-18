@@ -28,6 +28,30 @@ export default function SummaryPerformancePanel({
   const whiteStats = computeSideStats(whiteMoves)
   const blackStats = computeSideStats(blackMoves)
 
+  const whiteAccuracy =
+    summary?.white_accuracy ??
+    (summary && (summary.player_color || 'white') === 'white' && summary.accuracy != null
+      ? summary.accuracy
+      : whiteStats.accuracy)
+
+  const whiteElo =
+    summary?.white_estimated_elo ??
+    (summary && (summary.player_color || 'white') === 'white' && summary.estimated_elo != null
+      ? summary.estimated_elo
+      : whiteStats.estimated_elo)
+
+  const blackAccuracy =
+    summary?.black_accuracy ??
+    (summary && summary.player_color === 'black' && summary.accuracy != null
+      ? summary.accuracy
+      : blackStats.accuracy)
+
+  const blackElo =
+    summary?.black_estimated_elo ??
+    (summary && summary.player_color === 'black' && summary.estimated_elo != null
+      ? summary.estimated_elo
+      : blackStats.estimated_elo)
+
   const activeStats = playerColor === 'white' ? whiteStats : blackStats
   const s =
     summary && playerColor === (summary.player_color || playerColor)
@@ -79,15 +103,13 @@ export default function SummaryPerformancePanel({
             <div>
               <div className="text-xs text-gray-400 font-medium">Est. Elo</div>
               <div className="text-lg font-bold text-purple-400">
-                {whiteStats.estimated_elo
-                  ? `~${whiteStats.estimated_elo}`
-                  : '—'}
+                {whiteElo ? `~${whiteElo}` : '—'}
               </div>
             </div>
             <div className="text-right">
               <div className="text-xs text-gray-400 font-medium">Accuracy</div>
               <div className="text-lg font-bold text-blue-400">
-                {whiteStats.accuracy !== null ? `${whiteStats.accuracy}%` : '—'}
+                {whiteAccuracy !== null ? `${whiteAccuracy}%` : '—'}
               </div>
             </div>
           </div>
@@ -125,15 +147,13 @@ export default function SummaryPerformancePanel({
             <div>
               <div className="text-xs text-gray-400 font-medium">Est. Elo</div>
               <div className="text-lg font-bold text-purple-400">
-                {blackStats.estimated_elo
-                  ? `~${blackStats.estimated_elo}`
-                  : '—'}
+                {blackElo ? `~${blackElo}` : '—'}
               </div>
             </div>
             <div className="text-right">
               <div className="text-xs text-gray-400 font-medium">Accuracy</div>
               <div className="text-lg font-bold text-blue-400">
-                {blackStats.accuracy !== null ? `${blackStats.accuracy}%` : '—'}
+                {blackAccuracy !== null ? `${blackAccuracy}%` : '—'}
               </div>
             </div>
           </div>

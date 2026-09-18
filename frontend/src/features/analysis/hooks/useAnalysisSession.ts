@@ -139,12 +139,16 @@ export function useAnalysisSession() {
             (m) => m.color === playerColor
           )
           if (playerMoves.length > 0) {
-            const avgCpLoss =
-              playerMoves.reduce((acc, m) => acc + (m.cp_loss || 0), 0) /
-              playerMoves.length
+            const cappedLossSum = playerMoves.reduce(
+              (acc, m) => acc + Math.min(Math.max(0, m.cp_loss || 0), 200),
+              0
+            )
+            const avgCpLoss = cappedLossSum / playerMoves.length
             cachedSummary = {
               ...cachedSummary,
-              estimated_elo: estimateElo(avgCpLoss) || undefined,
+              estimated_elo:
+                cachedSummary.estimated_elo ??
+                (estimateElo(avgCpLoss, cachedSummary.accuracy ?? null) || undefined),
             }
           }
         }

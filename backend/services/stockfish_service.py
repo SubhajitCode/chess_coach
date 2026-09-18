@@ -55,11 +55,15 @@ ELO_CALIBRATION_POINTS = [
 MAX_CP_LOSS_FOR_STATS = 350.0
 
 
-def _estimate_elo(avg_cp_loss: float) -> int:
-    """Rough ELO estimate from average centipawn loss per move.
+def _estimate_elo(avg_cp_loss: float, accuracy: float | None = None) -> int:
+    """Rough ELO estimate blending ACPL with accuracy when available."""
+    if accuracy is not None:
+        try:
+            from services.engines.common import estimate_elo
+            return estimate_elo(avg_cp_loss, accuracy)
+        except Exception:
+            pass
 
-    Uses a piecewise linear interpolation across calibration anchors.
-    """
     avg_cp_loss = max(10.0, min(MAX_CP_LOSS_FOR_STATS, avg_cp_loss))
 
     if avg_cp_loss <= ELO_CALIBRATION_POINTS[0][0]:
@@ -707,9 +711,27 @@ def analyze_position(
     else:
         accuracy = 0.0
 
+    white_moves = [m for m in moves_data if m.color == "white"]
+    black_moves = [m for m in moves_data if m.color == "black"]
+
+    def _stats_for_moves(m_list):
+        if not m_list:
+            return 0.0, None, None
+        w_score = sum(
+            {"best": 100, "book": 100, "excellent": 90, "good": 75, "inaccuracy": 50, "mistake": 25, "blunder": 0}.get(m.classification, 75)
+            for m in m_list
+        )
+        acc = round(w_score / len(m_list), 1)
+        c_loss = sum(min(m.cp_loss, MAX_CP_LOSS_FOR_STATS) for m in m_list) / len(m_list)
+        return acc, round(c_loss, 1), _estimate_elo(c_loss, acc)
+
+    white_acc, white_loss, white_elo = _stats_for_moves(white_moves)
+    black_acc, black_loss, black_elo = _stats_for_moves(black_moves)
+
     summary = GameSummary(
         total_moves=len(moves_data),
         player_moves=total_player,
+        player_color=player_color,
         blunders=counts["blunder"],
         mistakes=counts["mistake"],
         inaccuracies=counts["inaccuracy"],
@@ -719,7 +741,11 @@ def analyze_position(
         book_moves=counts["book"],
         accuracy=accuracy,
         avg_cp_loss=round(avg_capped_loss, 1) if total_player > 0 else None,
-        estimated_elo=_estimate_elo(avg_capped_loss) if total_player > 0 else None,
+        estimated_elo=_estimate_elo(avg_capped_loss, accuracy) if total_player > 0 else None,
+        white_accuracy=white_acc if white_moves else None,
+        black_accuracy=black_acc if black_moves else None,
+        white_estimated_elo=white_elo if white_moves else None,
+        black_estimated_elo=black_elo if black_moves else None,
     )
 
     return AnalysisResult(
@@ -754,10 +780,27 @@ def _build_summary(moves_data: list, player_color: str) -> dict:
     else:
         accuracy = 0.0
 
+    def _stats_for_dict_moves(m_list):
+        if not m_list:
+            return 0.0, None, None
+        w_score = sum(
+            {"best": 100, "book": 100, "excellent": 90, "good": 75, "inaccuracy": 50, "mistake": 25, "blunder": 0}.get(m.get("classification", "good"), 75)
+            for m in m_list
+        )
+        acc = round(w_score / len(m_list), 1)
+        c_loss = sum(min(m["cp_loss"], MAX_CP_LOSS_FOR_STATS) for m in m_list) / len(m_list)
+        return acc, round(c_loss, 1), _estimate_elo(c_loss, acc)
+
+    white_moves = [m for m in moves_data if m.get("color") == "white"]
+    black_moves = [m for m in moves_data if m.get("color") == "black"]
+    white_acc, white_loss, white_elo = _stats_for_dict_moves(white_moves)
+    black_acc, black_loss, black_elo = _stats_for_dict_moves(black_moves)
+
     return {
         "type": "summary",
         "total_moves": len(moves_data),
         "player_moves": total_player,
+        "player_color": player_color,
         "blunders": counts["blunder"],
         "mistakes": counts["mistake"],
         "inaccuracies": counts["inaccuracy"],
@@ -767,7 +810,11 @@ def _build_summary(moves_data: list, player_color: str) -> dict:
         "book_moves": counts["book"],
         "accuracy": accuracy,
         "avg_cp_loss": round(avg_capped_loss, 1) if total_player > 0 else None,
-        "estimated_elo": _estimate_elo(avg_capped_loss) if total_player > 0 else None,
+        "estimated_elo": _estimate_elo(avg_capped_loss, accuracy) if total_player > 0 else None,
+        "white_accuracy": white_acc if white_moves else None,
+        "black_accuracy": black_acc if black_moves else None,
+        "white_estimated_elo": white_elo if white_moves else None,
+        "black_estimated_elo": black_elo if black_moves else None,
     }
 
 

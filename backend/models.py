@@ -114,6 +114,11 @@ class GameSummary(BaseModel):
     avg_cp_loss: Optional[float] = None
     estimated_elo: Optional[int] = None
     book_moves: Optional[int] = 0
+    player_color: Optional[str] = None
+    white_accuracy: Optional[float] = None
+    black_accuracy: Optional[float] = None
+    white_estimated_elo: Optional[int] = None
+    black_estimated_elo: Optional[int] = None
 
 
 class AnalysisResult(BaseModel):

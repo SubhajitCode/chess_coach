@@ -144,7 +144,7 @@ def _refresh_summary_estimate(summary: dict[str, Any], moves: list[dict], player
     return {
         **summary,
         "avg_cp_loss": round(avg_capped_loss, 1),
-        "estimated_elo": _estimate_elo(avg_capped_loss),
+        "estimated_elo": _estimate_elo(avg_capped_loss, summary.get("accuracy")),
     }
 
 
