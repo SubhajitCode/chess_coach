@@ -18,8 +18,9 @@ import {
   loadLastSession,
   type AnalysisSessionRecord,
 } from '../../../core/storage/profileStorage'
+import { computePgnHash } from '../../../core/chess/hash'
 import type { CoachProfile } from '../../../types/coaching'
-import type { GameItem, PlayerColor } from '../../../types/chess'
+import type { GameItem, PlayerColor, CacheStatusDetail } from '../../../types/chess'
 
 export function useDashboard() {
   const navigate = useNavigate()
@@ -42,7 +43,7 @@ export function useDashboard() {
   const [sortBy, setSortBy] = useState<string>('date_desc')
   const [loading, setLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
-  const [cacheStatus, setCacheStatus] = useState<Record<string, boolean>>({})
+  const [cacheStatus, setCacheStatus] = useState<Record<string, CacheStatusDetail | boolean>>({})
 
   const [gamesSource, setGamesSource] = useState<string | null>(null)
   const [selectedGame, setSelectedGame] = useState<GameItem | null>(null)
@@ -134,7 +135,16 @@ export function useDashboard() {
           setGamesSource(`Lichess (${profile.username.trim()})`)
         }
 
-        const fetchedGames = result.games || []
+        const rawGames = result.games || []
+        const fetchedGames: GameItem[] = await Promise.all(
+          rawGames.map(async (g) => {
+            if (!g.pgn_hash && g.pgn) {
+              const h = await computePgnHash(g.pgn)
+              return { ...g, pgn_hash: h }
+            }
+            return g
+          })
+        )
         setGames(fetchedGames)
 
         const hashes = fetchedGames
@@ -142,8 +152,14 @@ export function useDashboard() {
           .filter((h): h is string => Boolean(h))
 
         if (hashes.length > 0) {
-          checkCacheBatch(hashes)
-            .then(setCacheStatus)
+          checkCacheBatch(hashes, profile.username.trim())
+            .then((data) => {
+              if (data?.cache_status) {
+                setCacheStatus(data.cache_status)
+              } else if (data) {
+                setCacheStatus(data)
+              }
+            })
             .catch(() => {})
         }
       } catch (err: any) {
@@ -191,7 +207,7 @@ export function useDashboard() {
   )
 
   const handleSelectGame = useCallback(
-    (game: GameItem, playerColorOverride?: PlayerColor) => {
+    (game: GameItem, playerColorOverride?: PlayerColor, engineOverride?: string) => {
       setSelectedGame(game)
       const determinedColor: PlayerColor =
         playerColorOverride ||
@@ -199,15 +215,23 @@ export function useDashboard() {
         game.black?.toLowerCase() === profile.username.toLowerCase()
           ? 'black'
           : 'white')
+      const cachedInfo = game.pgn_hash ? cacheStatus[game.pgn_hash] : null
+      const initialEngine =
+        engineOverride ||
+        (typeof cachedInfo === 'object' && cachedInfo !== null && 'latest_engine' in cachedInfo
+          ? (cachedInfo as any).latest_engine || (cachedInfo as any).engines?.[0]
+          : null)
+
       navigate('/analysis', {
         state: {
           game,
           playerColor: determinedColor,
           username: profile.username,
+          initialEngine,
         },
       })
     },
-    [navigate, profile.username]
+    [navigate, profile.username, cacheStatus]
   )
 
   const handleResumeAnalysis = useCallback(() => {

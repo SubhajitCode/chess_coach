@@ -1,5 +1,5 @@
 import { formatDate, prettifyOpening } from '../../../core/chess/pgnParser'
-import type { GameItem } from '../../../types/chess'
+import type { GameItem, CacheStatusMap } from '../../../types/chess'
 
 export interface GameListProps {
   games: GameItem[]
@@ -10,7 +10,46 @@ export interface GameListProps {
   username: string
   sortMode: string
   onSortChange: (mode: string) => void
-  cacheStatus?: Record<string, boolean>
+  cacheStatus?: CacheStatusMap
+}
+
+interface EngineBadgeStyle {
+  label: string
+  icon: string
+  className: string
+  tooltip: string
+}
+
+const ENGINE_BADGE_CONFIG: Record<string, EngineBadgeStyle> = {
+  stockfish: {
+    label: 'Stockfish',
+    icon: '⚡',
+    className:
+      'bg-cyan-950/90 border border-cyan-500/70 text-cyan-300 shadow-xs shadow-cyan-950/50',
+    tooltip: 'Analyzed with Stockfish 16 Engine',
+  },
+  hybrid: {
+    label: 'Hybrid',
+    icon: '🔮',
+    className:
+      'bg-purple-950/90 border border-purple-500/70 text-purple-300 shadow-xs shadow-purple-950/50',
+    tooltip: 'Analyzed with Hybrid AI Coach',
+  },
+  human_model: {
+    label: 'Human AI',
+    icon: '👤',
+    className:
+      'bg-amber-950/90 border border-amber-500/70 text-amber-300 shadow-xs shadow-amber-950/50',
+    tooltip: 'Analyzed with Humanized Neural Model',
+  },
+}
+
+const DEFAULT_BADGE_CONFIG: EngineBadgeStyle = {
+  label: 'Analyzed',
+  icon: '✓',
+  className:
+    'bg-emerald-950/90 border border-emerald-600/70 text-emerald-300 shadow-xs shadow-emerald-950/50',
+  tooltip: 'Game already analyzed',
 }
 
 export default function GameList({
@@ -120,7 +159,21 @@ export default function GameList({
           }
 
           const openingName = prettifyOpening(game.opening)
-          const isCached = Boolean(game.pgn_hash && cacheStatus[game.pgn_hash])
+          const rawStatus = game.pgn_hash ? cacheStatus[game.pgn_hash] : undefined
+          const isAnalyzed = Boolean(
+            typeof rawStatus === 'object' && rawStatus !== null
+              ? rawStatus.analyzed
+              : rawStatus
+          )
+          const analyzedEngines: string[] =
+            typeof rawStatus === 'object' &&
+            rawStatus !== null &&
+            Array.isArray(rawStatus.engines) &&
+            rawStatus.engines.length > 0
+              ? rawStatus.engines
+              : isAnalyzed
+              ? ['default']
+              : []
 
           return (
             <button
@@ -130,6 +183,8 @@ export default function GameList({
               className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between gap-2.5 cursor-pointer ${
                 selectedGame === game
                   ? 'bg-blue-950/40 border-blue-500 shadow-md ring-1 ring-blue-500/40'
+                  : isAnalyzed
+                  ? 'bg-gray-900/95 border-gray-700 hover:border-gray-600 hover:bg-gray-850 shadow-xs'
                   : 'bg-gray-900/90 border-gray-800 hover:border-gray-700 hover:bg-gray-850'
               }`}
             >
@@ -155,17 +210,25 @@ export default function GameList({
                     vs {opponent || 'Unknown Opponent'}
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 flex-wrap justify-end">
                   <span
                     className={`px-2 py-0.5 rounded text-[11px] font-semibold ${resultBadge}`}
                   >
                     {resultLabel}
                   </span>
-                  {isCached && (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/80 border border-emerald-700/60 text-emerald-400">
-                      ✓ Cached
-                    </span>
-                  )}
+                  {analyzedEngines.map((eng) => {
+                    const cfg = ENGINE_BADGE_CONFIG[eng] || DEFAULT_BADGE_CONFIG
+                    return (
+                      <span
+                        key={eng}
+                        title={cfg.tooltip}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide ${cfg.className}`}
+                      >
+                        <span aria-hidden="true">{cfg.icon}</span>
+                        <span>{cfg.label}</span>
+                      </span>
+                    )
+                  })}
                 </div>
               </div>
 

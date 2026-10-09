@@ -1,11 +1,13 @@
 import asyncio
 import json
+import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from models import AnalyzeRequest, PositionAnalyzeRequest
 from services.engines.factory import EngineFactory
 from services.db import save_analysis, pgn_hash as compute_pgn_hash
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -26,7 +28,8 @@ async def analyze_game_stream(req: AnalyzeRequest):
 
     depth = req.depth or 18
     player_color = req.player_color or "white"
-    engine_strategy = EngineFactory.get_engine(req.engine or "hybrid")
+    engine_name = req.engine or "hybrid"
+    engine_strategy = EngineFactory.get_engine(engine_name)
 
     async def generate():
         loop = asyncio.get_event_loop()
@@ -39,7 +42,7 @@ async def analyze_game_stream(req: AnalyzeRequest):
             if chunk.startswith("data: ") and not chunk.strip().endswith("[DONE]"):
                 try:
                     data = json.loads(chunk[6:].strip())
-                    if data.get("type") == "move":
+                    if data.get("type") == "move" or ("move_number" in data and "move_san" in data):
                         collected_moves.append(data)
                     elif data.get("type") == "summary":
                         collected_summary = data
@@ -49,9 +52,16 @@ async def analyze_game_stream(req: AnalyzeRequest):
         # Persist to SQLite after stream finishes
         if collected_moves:
             try:
-                save_analysis(req.pgn, player_color, collected_moves, collected_summary)
-            except Exception:
-                pass  # caching is best-effort
+                save_analysis(
+                    req.pgn,
+                    player_color,
+                    collected_moves,
+                    collected_summary,
+                    username=req.username or "",
+                    engine=engine_name,
+                )
+            except Exception as e:
+                logger.exception("Failed to save analysis to DB: %s", e)
 
     return StreamingResponse(
         generate(),

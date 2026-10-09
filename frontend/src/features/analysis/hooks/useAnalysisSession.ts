@@ -50,7 +50,9 @@ export function useAnalysisSession() {
   const [analyzedCount, setAnalyzedCount] = useState<number>(0)
 
   // Engine selection state
-  const [selectedEngine, setSelectedEngine] = useState<string>('stockfish')
+  const [selectedEngine, setSelectedEngine] = useState<string>(
+    state?.initialEngine || 'hybrid'
+  )
   const [availableEngines, setAvailableEngines] = useState<EngineOption[]>([])
 
   // Coaching state
@@ -122,15 +124,36 @@ export function useAnalysisSession() {
 
   // Bootstrap cached analysis
   useEffect(() => {
-    if (!game?.pgn) return
+    if (!game?.pgn || analyzing) return
     let cancelled = false
     ;(async () => {
       try {
         const hash = await computePgnHash(game.pgn)
         if (cancelled) return
         setPgnHash(hash)
-        const cached = await getCachedAnalysis(hash)
-        if (cancelled || !cached) return
+
+        let cached = await getCachedAnalysis(hash, username || undefined, selectedEngine)
+        if (!cached && !state?.initialEngine) {
+          const fallback = await getCachedAnalysis(hash, username || undefined)
+          if (fallback && fallback.engine) {
+            setSelectedEngine(fallback.engine)
+            cached = fallback
+          }
+        }
+
+        if (cancelled) return
+
+        if (!cached) {
+          if (fromCache) {
+            setStreamedMoves([])
+            setSummary(null)
+            setFromCache(false)
+            setMoveCoaching({})
+            setGameOverview(null)
+          }
+          return
+        }
+
         setStreamedMoves(cached.moves || [])
 
         let cachedSummary: GameSummary | null = cached.summary || null
@@ -222,7 +245,7 @@ export function useAnalysisSession() {
     return () => {
       cancelled = true
     }
-  }, [game, playerColor, setTrackLatestState, switchRightTab, username])
+  }, [game, playerColor, selectedEngine, setTrackLatestState, switchRightTab, username])
 
   const parsedGameMoves = useMemo(() => parsePgnMoves(game?.pgn), [game?.pgn])
   const boardMoves = streamedMoves.length > 0 ? streamedMoves : parsedGameMoves
@@ -379,6 +402,7 @@ export function useAnalysisSession() {
       depth,
       playerColor,
       engine: selectedEngine,
+      username: username || undefined,
       onMeta: (meta) => {
         setGameMeta(meta)
         collectedMetaRef.current = meta

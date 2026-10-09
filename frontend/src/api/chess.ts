@@ -44,19 +44,26 @@ export async function fetchLichessGames(
 }
 
 export async function checkCacheBatch(
-  pgnHashes: string[]
-): Promise<Record<string, boolean>> {
+  pgnHashes: string[],
+  username?: string
+): Promise<any> {
   const { data } = await apiClient.post('/api/analysis/cache/batch', {
     pgn_hashes: pgnHashes,
+    username,
   })
   return data
 }
 
 export async function getCachedAnalysis(
-  pgnHash: string
+  pgnHash: string,
+  username?: string,
+  engine?: string
 ): Promise<CachedAnalysisResponse | null> {
   try {
-    const { data } = await apiClient.get(`/api/analysis/cache/${pgnHash}`)
+    const params: Record<string, string> = {}
+    if (username) params.username = username
+    if (engine) params.engine = engine
+    const { data } = await apiClient.get(`/api/analysis/cache/${pgnHash}`, { params })
     return (data?.cached ?? (data?.moves ? data : null)) as CachedAnalysisResponse | null
   } catch {
     return null
@@ -70,7 +77,8 @@ export function analyzeGameStream(options: AnalyzeGameStreamOptions): {
     pgn,
     depth = 18,
     playerColor = 'white',
-    engine = 'stockfish',
+    engine = 'hybrid',
+    username,
     onMeta,
     onMove,
     onSummary,
@@ -87,6 +95,7 @@ export function analyzeGameStream(options: AnalyzeGameStreamOptions): {
       depth,
       player_color: playerColor,
       engine,
+      username,
     },
     {
       onEvent: (event, data) => {

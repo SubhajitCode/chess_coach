@@ -27,6 +27,7 @@ export interface AnalyzeGameStreamOptions {
   depth?: number
   playerColor?: PlayerColor
   engine?: string
+  username?: string
   onMeta?: (meta: AnalyzeStreamMeta) => void
   onMove?: (move: ChessMove) => void
   onSummary?: (summary: GameSummary) => void
@@ -66,6 +67,9 @@ export interface PerMoveCoachingResponse {
 export interface CachedAnalysisResponse {
   moves: ChessMove[]
   summary: GameSummary
+  engine?: string
+  username?: string
+  pgn_hash?: string
 }
 
 export interface FetchEnginesResponse {

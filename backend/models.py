@@ -14,7 +14,8 @@ class AnalyzeRequest(BaseModel):
     pgn: str
     depth: Optional[int] = 18
     player_color: Optional[str] = None  # "white" or "black" — auto-detected if None
-    engine: Optional[str] = "stockfish"  # "stockfish", "human_model", or "hybrid"
+    engine: Optional[str] = "hybrid"  # "stockfish", "human_model", or "hybrid"
+    username: Optional[str] = None
 
 
 class CoachRequest(BaseModel):

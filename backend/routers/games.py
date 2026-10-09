@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from services import chesscom, lichess
 
+from services.db import pgn_hash
+
 router = APIRouter()
 
 
@@ -28,6 +30,10 @@ async def get_games(
         if "404" in error_msg or "Not Found" in error_msg:
             raise HTTPException(status_code=404, detail=f"User '{username}' not found on {source}")
         raise HTTPException(status_code=502, detail=f"Failed to fetch games: {error_msg}")
+
+    for g in games:
+        if "pgn" in g and not g.get("pgn_hash"):
+            g["pgn_hash"] = pgn_hash(g.get("pgn", ""))
 
     return {"games": games, "count": len(games)}
 

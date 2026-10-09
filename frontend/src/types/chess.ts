@@ -161,3 +161,13 @@ export interface ArrowItem {
   endSquare: string
   color: string
 }
+
+export interface CacheStatusDetail {
+  analyzed: boolean
+  engines: string[]
+  latest_engine?: string | null
+  created_at?: string | null
+}
+
+export type CacheStatusMap = Record<string, CacheStatusDetail | boolean>
+
